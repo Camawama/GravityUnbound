@@ -1,5 +1,9 @@
 # Gravity Unbound Changelog (formerly GravityVS)
 
+## Unreleased (2.0.0-dev) — 2026-09-16 (round 88: the field a rider carried off the ship)
+
+- **Dismounting no longer snaps you back into a field you already left.** Riding a vehicle out of a gravity field looked right — a passenger inherits its vehicle's gravity — but the moment you got off, the old field grabbed you for a few ticks before releasing. Field sources (core, plating, normalizer, Surface Cling) queue their effect onto EVERY entity in range, the rider included, and the queue is only drained by the non-vehicle path of `updateGravityStatus`: the passenger branch returns before it. So every tick of the ride inside the field appended one more unconsumed effect, and the FIRST tick after dismounting resolved the whole pile at once — a full-strength field target, `fieldGraceTicks` refreshed to 6, then the usual decay back to normal. The split second. The passenger branch now drops what the sources queued, the way the spectator, server-sync and ship-seat branches already did. Two lesser bugs went with it: the list grew without bound on a long ride (a boat parked in a field for an hour held 72000 effects), and `releaseFieldGraceNow`/`releaseCling` decline while a primary field is pending — which, from a stale queue, was forever.
+
 ## Unreleased (2.0.0-dev) — 2026-09-12 (round 87: the physgun's frame, the drifting throw, the glide's face, what the chicken does on a cube)
 
 - **A physgun-held ship turns with its holder under rotated gravity.**

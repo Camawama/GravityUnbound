@@ -2422,6 +2422,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
                     ? vehicleComp.targetGravityVector
                     : vehicleComp.isVisuallyDefault() ? null
                         : RotationUtil.vecPlayerToWorld(new Vec3(0, -1, 0), vehicleComp.getVisualRotation());
+                // A RIDER CONSUMES NO FIELD EFFECTS OF ITS OWN. Field
+                // sources queue onto every entity in range, the rider
+                // included, and this branch returns before the queue is
+                // drained — so an unconsumed field piled up for the whole
+                // ride and the FIRST tick after dismounting resolved all of
+                // it at once: a split-second snap back to the field the
+                // vehicle had long since left, then grace decay back to
+                // normal. (It also grew the list without bound on a long
+                // ride, and left releaseFieldGraceNow/releaseCling seeing a
+                // primary field pending forever.) The vehicle owns the
+                // rider's gravity — drop what the sources queued.
+                tempEffects.clear();
+                delayApplyDirEffects.clear();
+                delayApplyStrengthEffect = 1.0;
                 // the vehicle owns the field state; nothing ship-anchored
                 // survives from before mounting
                 fieldGraceTicks = vehicleComp.fieldGraceTicks;

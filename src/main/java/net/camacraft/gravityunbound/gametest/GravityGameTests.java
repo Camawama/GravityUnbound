@@ -3,6 +3,7 @@ package net.camacraft.gravityunbound.gametest;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.init.GravityBlocks;
+import net.camacraft.gravityunbound.plating.GravityPlatingBlock;
 import net.camacraft.gravityunbound.sticky.Rotation24;
 import net.camacraft.gravityunbound.sticky.StickyRailBlock;
 import org.slf4j.Logger;
@@ -276,6 +277,109 @@ public class GravityGameTests {
     }
 
     /** Stone floor, a 3x3x3 stone cube at (8..10, 4..6, 8..10) with a gravity core at its center. */
+    /**
+     * PLATING ON A WALL, a boat resting on the plated face, and then the
+     * field is taken away - the release the "boat driven out of the field
+     * ends up inside the wall" report is about. Its position is its feet
+     * point, which lies ON the face, so when the frame unwinds back to plain
+     * gravity the upright box straddles the wall's plane; vanilla never
+     * pushes an embedded box out. The boat must come out of the transition
+     * clear of the blocks.
+     *
+     * Valkyrien Skies cancels every {@code move()} in the game-test world
+     * (its box overlaps a ship it does not consider fully loaded - see
+     * {@code debugShipFreeze}), so the boat cannot DRIVE down the face here.
+     * It is parked on the face by hand while the field turns its frame; the
+     * release itself, and the clearance, run entirely in the capability
+     * tick and are unaffected.
+     */
+    @GameTest(template = EMPTY, timeoutTicks = 400)
+    public static void boatLeavingWallFieldIsNotLeftInTheWall(GameTestHelper helper) {
+        // two-thick stone wall at x = 10,11; plating on its west face at
+        // x = 9 pulling EAST
+        for (int y = 6; y <= 15; y++) {
+            for (int z = 5; z <= 14; z++) {
+                helper.setBlock(new BlockPos(10, y, z), Blocks.STONE.defaultBlockState());
+                helper.setBlock(new BlockPos(11, y, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        BlockState plating = GravityBlocks.GRAVITY_PLATING.get().defaultBlockState()
+            .setValue(GravityPlatingBlock.directionToProperty(Direction.EAST), true);
+        for (int y = 8; y <= 15; y++) {
+            for (int z = 5; z <= 14; z++) {
+                helper.setBlock(new BlockPos(9, y, z), plating);
+            }
+        }
+
+        Vec3 origin = Vec3.atLowerCornerOf(helper.absolutePos(BlockPos.ZERO));
+        Vec3 rest = new Vec3(9.9, 12.0, 9.5);
+        Boat boat = helper.spawn(EntityType.BOAT, rest);
+
+        // park it on the face until the field owns its frame
+        for (int t = 1; t <= 60; t++) {
+            helper.runAfterDelay(t, () -> boat.setPos(origin.add(rest)));
+        }
+
+        helper.runAfterDelay(61, () -> {
+            GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(boat);
+            if (comp == null || comp.getUpVector().x > -0.9) {
+                helper.fail("the plating never turned the boat onto the face: up="
+                    + (comp == null ? "null" : fmt(comp.getUpVector())));
+                return;
+            }
+            // take the field away: this is "drove out the bottom of it"
+            for (int y = 8; y <= 15; y++) {
+                for (int z = 5; z <= 14; z++) {
+                    helper.setBlock(new BlockPos(9, y, z), Blocks.AIR.defaultBlockState());
+                }
+            }
+        });
+
+        for (int t = 20; t <= 180; t += 10) {
+            final int tick = t;
+            helper.runAfterDelay(t, () -> {
+                GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(boat);
+                Vec3 rel = boat.position().subtract(origin);
+                LOGGER.info("[GravityUnbound/test] wallboat t={} rel={} up={} visualDefault={} dir={} uprightClear={}",
+                    tick, fmt(rel),
+                    comp == null ? "null" : fmt(comp.getUpVector()),
+                    comp == null ? "?" : comp.isVisuallyDefault(),
+                    comp == null ? "?" : comp.getCurrGravityDirection(),
+                    uprightIsClear(boat));
+            });
+        }
+
+        helper.runAfterDelay(190, () -> {
+            GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(boat);
+            Vec3 rel = boat.position().subtract(origin);
+            if (comp == null || !comp.isVisuallyDefault()) {
+                helper.fail("boat never returned to plain gravity: up="
+                    + (comp == null ? "null" : fmt(comp.getUpVector())) + " rel=" + fmt(rel));
+                return;
+            }
+            if (!uprightIsClear(boat)) {
+                helper.fail("boat finished the transition INSIDE the wall: rel=" + fmt(rel)
+                    + " box=" + boat.getBoundingBox());
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Is the entity's UPRIGHT (plain-gravity) body clear of blocks? Built
+     * from the dimensions rather than read off the entity, because the
+     * stored box is only refreshed when something moves the entity - a
+     * frozen or resting one can still be carrying the rotated envelope,
+     * which is narrower across the face and hides the very overlap this
+     * asks about.
+     */
+    private static boolean uprightIsClear(net.minecraft.world.entity.Entity entity) {
+        net.minecraft.world.phys.AABB upright =
+            entity.getDimensions(entity.getPose()).makeBoundingBox(entity.position());
+        return entity.level().noCollision(entity, upright.deflate(0.02));
+    }
+
     private static void buildCoreCube(GameTestHelper helper) {
         for (int x = 0; x < 20; x++) {
             for (int z = 0; z < 20; z++) {

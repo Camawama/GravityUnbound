@@ -429,6 +429,15 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // if it persists anyway, snap out instead of leaving the player stuck with
     // sphere collision in the plain world
     private int capsuleNoInfluenceTicks = 0;
+
+    // whether the frame's chase target was plain world up last tick; the
+    // RISING edge is the release clearBlocksOnFieldExit steps the body off
+    // the face on. Starts true: an entity spawns heading nowhere.
+    private boolean frameTargetWasUpright = true;
+    // the last frame up that was materially off world-up: the face the body
+    // was resting on, kept because the frame can reach the target in the
+    // very tick the release is ordered (see clearBlocksOnFieldExit)
+    private @Nullable Vec3 lastRotatedUp = null;
     private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
 
     // chase-target stability: a still target is converged on decisively, a
@@ -625,6 +634,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         updateSurfaceProbe();
         updateShipAttachment();
         advanceVisualRotation();
+        clearBlocksOnFieldExit();
         applyTransitionPull();
         applyStaticFriction();
         capsuleExitWatchdog();
@@ -1178,6 +1188,95 @@ public class GravityCapabilityImpl implements IGravityCapability {
         updateBoundingBox();
         needsSync = true;
         capsuleNoInfluenceTicks = 0;
+    }
+
+    /**
+     * LEAVING A FIELD LEAVES THE BODY IN THE WALL. An entity's position is
+     * its FEET point, and under a field it rests ON the face the field
+     * pulls it onto — a wall or a ceiling, in world terms. The frame turns
+     * about that point, so once it has unwound back to plain gravity the
+     * upright body straddles a point lying IN the face's plane: half of it
+     * inside the blocks. Vanilla never pushes an already-embedded box out
+     * (it only resolves collisions along a movement), so a boat ridden out
+     * of a core's field ended the transition inside the hull it had been
+     * resting against and would not move again.
+     *
+     * This is the clearance {@link #releaseCling} performs for an explicit
+     * cling release, applied to the release that has no API call behind it:
+     * the field's own expiry. Fired on the tick the frame is ordered home
+     * and before any of the unwinding has happened, so the step is taken
+     * while the body is still rotated and clear of the face — not after it
+     * has swung into it.
+     *
+     * PREDICTIVE, so it never pops an entity that was not in trouble: the
+     * test is the box the entity is about to have (vanilla's upright one at
+     * its current position), not the rotated body it still has. A boat
+     * leaving a field in open water, or standing on a real floor, overlaps
+     * nothing and is not touched; only one that would come out of the
+     * transition embedded is stepped off the face, along the face normal,
+     * by exactly the overlap. The previous-tick position travels with it so
+     * the step is neither read back as velocity nor drawn as a slide.
+     *
+     * Players are excluded: their own release path already clears them, and
+     * their movement is client-authoritative through exactly this
+     * transition (see {@link #isMovementClientAuthoritative}).
+     */
+    private void clearBlocksOnFieldExit() {
+        // THE FACE IT WAS RESTING ON, remembered every tick the body is
+        // rotated. Captured before the edge test below, because a settled
+        // chase converges DECISIVELY: the frame can reach plain up in the
+        // very tick the release is ordered, and reading the live up there
+        // would give world up and nothing to step along.
+        Vec3 up = getUpVector();
+        if (up.y < 0.99 && up.lengthSqr() > 1.0E-6) {
+            lastRotatedUp = up;
+        }
+
+        // "THE FRAME IS BEING SENT HOME": the chase target is plain world up
+        // and was not last tick. Read off the FRAME, not off the field
+        // state, because a non-player entity computes no gravity of its own
+        // on the client — shouldAcceptServerSync returns at the top of
+        // updateGravityStatus, so fieldGraceTicks is a server-only number
+        // there and a trigger built on it fires on one side only. The frame
+        // target is synced, so both sides see this same edge.
+        Vec3 targetUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualTarget);
+        boolean upright = targetUp.y > 0.999;
+        boolean wasUpright = frameTargetWasUpright;
+        frameTargetWasUpright = upright;
+        if (!upright || wasUpright) {
+            return;
+        }
+
+        Vec3 escape = lastRotatedUp;
+        lastRotatedUp = null;
+        if (escape == null || entity instanceof Player) {
+            return;
+        }
+        // WHICH SIDE STEPS. The server simulates every non-player entity, so
+        // it always does. The rider's client MUST do it too for a vehicle it
+        // controls: a ridden boat's position is CLIENT-sent, so a server-side
+        // step alone is overwritten by the next ServerboundMoveVehiclePacket
+        // — which is exactly why this was reported while RIDING. Both sides
+        // stepping is safe: the step clears the overlap that is there, a
+        // clear box yields no offset at all, and both read the same synced
+        // frame, so they converge on the same place.
+        if (entity.level().isClientSide() && !entity.isControlledByLocalInstance()) {
+            return;
+        }
+
+        AABB uprightBox = entity.getDimensions(entity.getPose()).makeBoundingBox(entity.position());
+        Vec3 offset = clearFromBlocks(escape.normalize(), uprightBox);
+        if (offset.lengthSqr() < 1.0E-12) {
+            return;
+        }
+        entity.xo += offset.x;
+        entity.yo += offset.y;
+        entity.zo += offset.z;
+        entity.xOld += offset.x;
+        entity.yOld += offset.y;
+        entity.zOld += offset.z;
+        updateBoundingBox();
+        needsSync = true;
     }
 
     /**
@@ -3416,17 +3515,27 @@ public class GravityCapabilityImpl implements IGravityCapability {
 
     // Adjust position to avoid suffocation in blocks when changing gravity
     private void adjustEntityPosition(Direction oldGravity, Direction newGravity, AABB entityBoundingBox) {
+        // for example, if gravity changed from down to north, move up
+        // if gravity changed from down to up, also move up
+        clearFromBlocks(
+            Vec3.atLowerCornerOf(oldGravity.getOpposite().getNormal()), entityBoundingBox);
+    }
+
+    /**
+     * Step the entity out of whatever blocks {@code entityBoundingBox}
+     * currently overlaps, along {@code escapeDirection} — the direction
+     * known to be free — by exactly the overlap, and return the offset
+     * applied ({@link Vec3#ZERO} when nothing was in the way). Shared by the
+     * legacy cardinal snap and the field-exit clearance.
+     */
+    private Vec3 clearFromBlocks(Vec3 escapeDirection, AABB entityBoundingBox) {
         if (!GravityConfig.adjustPositionAfterChangingGravity.get()) {
-            return;
+            return Vec3.ZERO;
         }
 
         if (entity instanceof AreaEffectCloud || entity instanceof AbstractArrow || entity instanceof EndCrystal) {
-            return;
+            return Vec3.ZERO;
         }
-
-        // for example, if gravity changed from down to north, move up
-        // if gravity changed from down to up, also move up
-        Vec3 movingDirection = Vec3.atLowerCornerOf(oldGravity.getOpposite().getNormal());
 
         Iterable<VoxelShape> collisions = entity.level().getCollisions(
             entity,
@@ -3445,11 +3554,14 @@ public class GravityCapabilityImpl implements IGravityCapability {
             }
         }
 
-        if (totalCollisionBox != null) {
-            entity.setPos(entity.position().add(getPositionAdjustmentOffset(
-                entityBoundingBox, totalCollisionBox, movingDirection
-            )));
+        if (totalCollisionBox == null) {
+            return Vec3.ZERO;
         }
+        Vec3 offset = getPositionAdjustmentOffset(
+            entityBoundingBox, totalCollisionBox, escapeDirection
+        );
+        entity.setPos(entity.position().add(offset));
+        return offset;
     }
 
     private static Vec3 getPositionAdjustmentOffset(

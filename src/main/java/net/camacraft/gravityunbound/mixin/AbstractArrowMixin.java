@@ -4,6 +4,8 @@ package net.camacraft.gravityunbound.mixin;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.util.RotationUtil;
 import org.spongepowered.asm.mixin.Mixin;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -27,33 +29,31 @@ public abstract class AbstractArrowMixin extends Entity {
     }
     
     
-    @ModifyVariable(
+    // Vanilla ends tick() with: vec34 = getDeltaMovement(); setDeltaMovement(vec34.x, vec34.y - 0.05, vec34.z)
+    // (the constant scaled by the ModifyConstant below). Re-aim that world-down
+    // pull along the CONTINUOUS field vector (cardinal fallback): orbits around
+    // a core curve smoothly instead of stepping through the six cardinal pulls.
+    // Wraps the gravity write itself: the earlier form modified the velocity
+    // local at EVERY store - including the one the position is integrated
+    // with - so a rotated-gravity arrow drifted world-up 0.05 blocks a tick
+    // (1 m/s) regardless of its velocity, and led its own acceleration by a tick.
+    @WrapOperation(
         method = "Lnet/minecraft/world/entity/projectile/AbstractArrow;tick()V",
         at = @At(
-            value = "STORE"
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/projectile/AbstractArrow;setDeltaMovement(DDD)V"
         )
-        , ordinal = 0
     )
-    public Vec3 tick(Vec3 modify) {
-        // Vanilla only applies gravity when the arrow has physics and gravity enabled
-        // (returning Loyalty tridents are noPhysics) - skip the compensation otherwise.
-        if (this.isNoGravity() || ((AbstractArrow) (Object) this).isNoPhysics()) {
-            return modify;
-        }
-
-        Direction gravityDirection = GravityChangerAPI.getGravityDirection(this);
+    private void gravityunbound$gravityAlongField(AbstractArrow self, double x, double y, double z, Operation<Void> original) {
+        Direction gravityDirection = GravityChangerAPI.getGravityDirection(self);
         if (gravityDirection == Direction.DOWN) {
-            return modify;
+            original.call(self, x, y, z);
+            return;
         }
-
-        // Vanilla later subtracts 0.05 * gravityStrength from world y (the ModifyConstant
-        // below scales the vanilla constant). Pre-cancel that world-down pull and re-apply
-        // the same magnitude along the CONTINUOUS field vector (falling back to the
-        // cardinal): orbits around a core curve smoothly instead of stepping through
-        // the six cardinal pulls.
-        double g = 0.05000000074505806D * GravityChangerAPI.getGravityStrength(this);
-        Vec3 pull = GravityChangerAPI.getFieldPullDirection(this);
-        return modify.add(0.0, g, 0.0).add(pull.scale(g));
+        double g = 0.05000000074505806D * GravityChangerAPI.getGravityStrength(self);
+        Vec3 pull = GravityChangerAPI.getFieldPullDirection(self);
+        // cancel vanilla's world -y (already subtracted from y), apply along the field
+        original.call(self, x + pull.x * g, y + g + pull.y * g, z + pull.z * g);
     }
 
 

@@ -194,6 +194,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // packets, impact measurement).
     public boolean clientOnGround = false;
     public int clientOnGroundAge = Integer.MAX_VALUE;
+    // rate limit for the flight-end diagnostic below
+    private int flightEndLogCooldown = 0;
     public @Nullable Quaternionf clientReportedFrame = null;
     public int clientFrameAge = Integer.MAX_VALUE;
     private final Quaternionf lastSentFrame = new Quaternionf();
@@ -303,6 +305,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 return;
             }
         }
+        Vec3 held = lastGroundNormal;
         fieldGraceTicks = 0;
         lastFieldVector = null;
         lastGroundNormal = null;
@@ -311,6 +314,96 @@ public class GravityCapabilityImpl implements IGravityCapability {
         recentReleasedNormal = null;
         recentReleasedTicks = 0;
         lastGroundShip = null;
+
+        // CLEARANCE FROM THE RELEASED WALL. The entity's position is its feet
+        // point, which stands ON the held face; the frame turns about that
+        // point. Once it has turned back to plain gravity the capsule (and
+        // then vanilla's box) is centered on a point lying in the wall's
+        // plane — half of it inside the wall: suffocation damage while the
+        // frame swung, then a box vanilla will not push out, hanging against
+        // the wall until the player moved away by hand. Step off the face
+        // by exactly what the upright body needs.
+        if (held != null && entity instanceof LivingEntity && useCapsuleCollision()) {
+            double baseLen = baseGravityDirection.length();
+            Vec3 nextUp = baseLen > 1.0E-6 ? baseGravityDirection.scale(-1.0 / baseLen) : new Vec3(0, 1, 0);
+            double along = Mth.clamp(nextUp.dot(held), 0.0, 1.0);
+            double clearance = net.camacraft.gravityunbound.util.CapsuleCollider.capsuleRadius(entity)
+                * (1.0 - along) + 0.05;
+            if (clearance > 0.06) {
+                entity.setPos(entity.position().add(held.scale(clearance)));
+            }
+        }
+    }
+
+    /**
+     * SERVER-SIDE PLAYER: the controlling client's last move packet said
+     * airborne (fresh within 5 ticks) and the player is a client-authoritative
+     * mover. The server's own movement replay is not the truth for those —
+     * inside a Valkyrien Skies ship's field its ship pose is a tick apart
+     * from the client's, and the replayed body brushes the hull the client
+     * cleared — so vanilla's ground-based decisions (ending an elytra glide,
+     * refusing to start one) defer to the client while this holds.
+     */
+    /**
+     * Diagnostic: the server is about to end (or refuse to start) a player's
+     * elytra flight on ITS OWN ground verdict, past the client-airborne
+     * guard. Logged once a second per player with everything the guard
+     * looked at, so a "my glide cancels inside the field" report can be
+     * read off the server log.
+     */
+    public void debugFlightEnd(String path, boolean serverOnGround) {
+        if (!(entity instanceof net.minecraft.server.level.ServerPlayer) || entity.level().isClientSide()) {
+            return;
+        }
+        if (flightEndLogCooldown > 0) {
+            return;
+        }
+        flightEndLogCooldown = 20;
+        Vec3 up = getUpVector();
+        LOGGER.info("[GravityUnbound] flight end [{}] {}: serverOnGround={} clientOnGround={} clientOnGroundAge={} "
+                + "clientAuthoritative={} capsule={} capsuleGrounded={} visualDefault={} fieldGrace={} attached={} "
+                + "passenger={} inWater={} up=({},{},{}) dm={}",
+            path, entity.getName().getString(), serverOnGround, clientOnGround, clientOnGroundAge,
+            isMovementClientAuthoritative(), useCapsuleCollision(), capsuleGrounded, isVisuallyDefault(),
+            fieldGraceTicks, attachShip != null, entity.isPassenger(), entity.isInWater(),
+            String.format(java.util.Locale.ROOT, "%.2f", up.x),
+            String.format(java.util.Locale.ROOT, "%.2f", up.y),
+            String.format(java.util.Locale.ROOT, "%.2f", up.z),
+            entity.getDeltaMovement());
+    }
+
+    /**
+     * Diagnostic: Valkyrien Skies cancels {@code Entity.move} outright for
+     * any entity whose box overlaps a ship it does not consider fully
+     * loaded (every shipyard chunk under the box must be loaded). Such an
+     * entity never moves, never lands, keeps whatever frame it snapped to
+     * and - for a chicken - flaps in place forever. Reported once a second
+     * per non-player entity under a field, so a "mobs on my ship freeze"
+     * report can be read off the server log.
+     */
+    private void debugShipFreeze() {
+        if (entity.level().isClientSide() || entity instanceof Player
+            || !(entity instanceof LivingEntity) || entity.tickCount % 20 != 7
+            || (fieldGraceTicks <= 0 && isVisuallyDefault())) {
+            return;
+        }
+        try {
+            if (org.valkyrienskies.mod.common.util.EntityShipCollisionUtils.isCollidingWithUnloadedShips(entity)) {
+                LOGGER.info("[GravityUnbound] Valkyrien Skies is freezing {} at {} (its box overlaps a ship whose shipyard chunks "
+                    + "are not all loaded, so VS cancels every move()): onGround={} up={} box={}",
+                    entity.getName().getString(), entity.position(), entity.onGround(), getUpVector(), entity.getBoundingBox());
+            }
+        }
+        catch (Throwable ignored) {
+            // VS internals changed: the diagnostic is best-effort
+        }
+    }
+
+    public boolean clientSaysAirborne() {
+        return entity instanceof net.minecraft.server.level.ServerPlayer
+            && !entity.level().isClientSide()
+            && isMovementClientAuthoritative()
+            && clientOnGroundAge < 5 && !clientOnGround;
     }
 
     /** A surface probe hit: the face normal (world space) and the ship it belongs to, if any. */
@@ -520,6 +613,10 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (clientFrameAge < Integer.MAX_VALUE) {
             clientFrameAge++;
         }
+        if (flightEndLogCooldown > 0) {
+            flightEndLogCooldown--;
+        }
+        debugShipFreeze();
         updateGravityStatus();
         applyGravityChange();
         applyGravityStrengthAttribute();
@@ -1041,6 +1138,18 @@ public class GravityCapabilityImpl implements IGravityCapability {
             capsuleNoInfluenceTicks = 0;
             return;
         }
+        // A RAIL PIN IS AN INFLUENCE: a minecart on a rotated sticky rail
+        // keeps its own plain gravity and holds its frame through the
+        // external visual override alone, so to the checks below it looked
+        // like a capsule stuck with nothing acting on it — every 40 ticks
+        // the watchdog snapped it upright (re-expressing its velocity and
+        // syncing a vanilla frame), the rail logic pinned it again a tick
+        // later, and the cart never settled onto its track.
+        if (visualOverrideApplied) {
+            visualOverrideApplied = false;
+            capsuleNoInfluenceTicks = 0;
+            return;
+        }
         boolean influenced = fieldGraceTicks > 0
             || lastGroundNormal != null
             || !baseGravityDirection.equals(DOWN)
@@ -1144,6 +1253,19 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (entity instanceof Player flyingPlayer && flyingPlayer.getAbilities().flying) {
             lastGroundNormal = null;
             groundNormalGraceTicks = 0;
+            recentReleasedNormal = null;
+            recentReleasedTicks = 0;
+            return;
+        }
+
+        // an elytra glide follows the raw field the same way: a glider
+        // skimming a face must not have that face adopted as its floor (the
+        // adoption turns the frame onto the face and holds it there, which
+        // is the planet-walk machinery, not flight)
+        if (entity instanceof LivingEntity glider && glider.isFallFlying()) {
+            lastGroundNormal = null;
+            groundNormalGraceTicks = 0;
+            surfaceChangeCooldown = 0;
             recentReleasedNormal = null;
             recentReleasedTicks = 0;
             return;
@@ -1526,10 +1648,21 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (lastGroundNormal == null) {
             return;
         }
-        groundNormalGraceTicks = Math.max(groundNormalGraceTicks, GROUND_NORMAL_GRACE_TICKS);
-        if (fieldGraceTicks > 0 && lastFieldVector != null) {
-            fieldGraceTicks = Math.max(fieldGraceTicks, FIELD_GRACE_TICKS);
+        // BOUNDED BY THE FIELD THAT ENDORSED THE SURFACE, exactly as the
+        // internal held-surface sustain is (see stillInsideLastFieldRegion).
+        // Refreshing both graces unconditionally made this a self-sustaining
+        // lock: a caller that holds the entity for as long as the player keeps
+        // a key down (a ledge grab never times out) pinned the field's grace at
+        // full every tick, so a player who had jumped clear of a field and
+        // grabbed a ledge outside it stayed pulled toward the field they had
+        // left, for as long as they hung there. Once the field is gone, or the
+        // entity is outside its region, the hold is no longer this field's to
+        // sustain and the normal decay must take it.
+        if (fieldGraceTicks <= 0 || lastFieldVector == null || !stillInsideLastFieldRegion()) {
+            return;
         }
+        groundNormalGraceTicks = Math.max(groundNormalGraceTicks, GROUND_NORMAL_GRACE_TICKS);
+        fieldGraceTicks = Math.max(fieldGraceTicks, FIELD_GRACE_TICKS);
     }
 
     /**
@@ -1898,6 +2031,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             visualRotation.set(externalVisualOverride);
             lastChaseTarget.set(externalVisualOverride);
             externalVisualOverride = null;
+            visualOverrideApplied = true;
             return;
         }
 
@@ -2548,6 +2682,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
     }
     // one-tick visual-frame override from rail-constrained vehicles
     private @Nullable Quaternionf externalVisualOverride = null;
+    /** Set when the override was consumed this tick; the exit watchdog reads and clears it. */
+    private boolean visualOverrideApplied = false;
     // consecutive ticks the collision ground plane disagreed with the held face
     private int contactDisagreeTicks = 0;
 

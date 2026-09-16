@@ -1000,7 +1000,10 @@ public abstract class EntityMixin {
     )
     private double redirect_getHorizontalFacing_getYaw_0(double rotation) {
         GravityCapabilityImpl comp = gravityunbound$comp();
-        if (comp == null) {
+        // inside the ship-placement window the yaw is already the ship-grid
+        // look (Valkyrien Skies' temporary player transform): vanilla's own
+        // horizontal facing is the right one there
+        if (comp == null || net.camacraft.gravityunbound.util.PlacementFrame.inShipPlacement()) {
             return rotation;
         }
 

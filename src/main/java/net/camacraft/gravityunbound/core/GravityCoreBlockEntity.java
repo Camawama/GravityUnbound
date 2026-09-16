@@ -318,9 +318,16 @@ public class GravityCoreBlockEntity extends BlockEntity
             // ON, alignment resolves the face; with snap OFF the user's spec
             // is NO snapping of any kind — pure smooth radial — and the
             // tilted-ground pins absorb the standing creep instead.
+            // BOATS are cardinalized whether or not they are grounded: a boat
+            // floats ON a face's water surface, a flat plane of the cube, and
+            // the radial pull tilted its frame off that plane everywhere but
+            // the face's exact center — a tilted "up" reads the water level
+            // off the cells' corners, so the boat was lifted out, dropped
+            // back in and finally driven under. Sector-cardinal like a
+            // grounded mob: face-normal gravity, a level water surface.
             boolean cardinalized = false;
             if (!(entity instanceof net.minecraft.world.entity.player.Player)
-                && comp.isGroundedInFrame()) {
+                && (comp.isGroundedInFrame() || entity instanceof net.minecraft.world.entity.vehicle.Boat)) {
                 direction = cardinalDirection(direction);
                 cardinalized = true;
             }

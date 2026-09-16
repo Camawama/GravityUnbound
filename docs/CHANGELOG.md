@@ -1,5 +1,163 @@
 # Gravity Unbound Changelog (formerly GravityVS)
 
+## Unreleased (2.0.0-dev) — 2026-09-12 (round 87: the physgun's frame, the drifting throw, the glide's face, what the chicken does on a cube)
+
+- **A physgun-held ship turns with its holder under rotated gravity.**
+  VMod rebuilds the holder's rotation every server tick from the
+  player's yaw and pitch (`rotateY(-yaw) * rotateX(pitch)`) and applies
+  the change since last tick to the held ship. Under this mod those two
+  angles are FRAME-relative: the same numbers describe a different world
+  direction as the gravity frame turns, and a settled frame's twist is
+  moved into yaw in one exact step. So VMod saw neither the frame turning
+  (the ship stayed put while the holder's whole view rotated with the
+  field) nor that the yaw jump was not a turn (the ship snapped round by
+  the twist). Two optional mixins (`@Pseudo`, applied only with VMod
+  present) hand VMod the WORLD rotation instead: the frame's
+  player-to-world rotation composed with the local one. The tick-to-tick
+  delta then includes the frame turning, and the twist renormalization
+  cancels exactly (the local yaw jump and the frame's twist change are
+  the same rotation) — no snap. The client's rotate-mode input was
+  already camera-based and needed nothing.
+- **Arrows and throwables no longer drift world-up in a field.** The
+  gravity re-aim for both modified the tick's velocity local at its STORE
+  — the same vector the POSITION is integrated with (and for arrows the
+  variable is stored twice, so it fired twice). The pre-cancel of
+  vanilla's world-down pull thus went into the position too: every
+  rotated-gravity arrow climbed 0.05 blocks a tick (1 m/s) regardless of
+  its velocity, every egg/snowball/pearl 0.03 (0.6 m/s), both leading
+  their own acceleration by a tick. The re-aim now wraps the gravity
+  write itself (`setDeltaMovement(x, y - g, z)`): velocity exact, position
+  untouched.
+- **A glider never adopts a face.** The surface probe treated an elytra
+  glide like walking: skimming a plated or core face inside a field could
+  adopt that face as the flyer's floor, turning the frame onto it and
+  holding it there (the planet-walk machinery). Gliders now follow the
+  raw field, exactly like creative flight. Whether this is the
+  "flight cancels on entering the ship's field" report could not be
+  settled by reading — every server-side path that ends or refuses a
+  glide is already guarded by the client's own airborne report — so each
+  of those paths now logs, once a second per player, everything the
+  guard looked at (`[GravityUnbound] flight end [...]`: server and client
+  onGround, report age, client authority, capsule state, field grace,
+  attachment, water). One such line from the ship field names the cause.
+- **Early projectile hits are logged.** An egg "hitting the thrower the
+  moment it is thrown" on the cube ship: a projectile that hits its own
+  owner within ten ticks, or a block within two, logs its spawn position,
+  velocity and the owner's position, eye, box and frame
+  (`[GravityUnbound] projectile early hit`). A spawn inside the hull
+  (block hit at tick 1, `(inside)`) and a genuine self-hit read
+  differently there.
+- **Mobs on a core cube stand, and walk round it — and what freezes them
+  on a ship.** Two new headless game tests drop a chicken beside the side
+  face and onto the top face of a 3x3x3 stone cube around a core: it lands
+  within ten ticks, stands grounded with its wings still (vanilla
+  `onGround`, which drives the flap), and — unprompted — planet-walks
+  around the cube's faces through `GravityPathNavigation`. The same tests
+  then reproduced the "flaps in place as if falling, not rotated properly"
+  report by accident: a chicken frozen mid-air at its spawn point, its
+  frame stuck on the radial snap, never grounded. A per-tick trace showed
+  `Entity.move` being entered every tick and never reaching the collision
+  step: Valkyrien Skies' entity-collision mixin cancels `move()` outright
+  for any entity whose box overlaps a ship it does not consider fully
+  loaded (every shipyard chunk under the box must be loaded) — here a
+  ghost ship left in the test world by an earlier assembly, whose stale
+  bounds caught whichever test cell they overlapped. A frozen entity never
+  moves, never lands, keeps whatever frame it snapped to, and a chicken
+  flaps forever. Nothing in this mod can unfreeze it; the capability now
+  reports it once a second per mob under a field (`[GravityUnbound]
+  Valkyrien Skies is freezing ...`) so a ship-mob report says whether this
+  is the cause (a ship VS has not fully loaded around the mob) or something
+  else. Ship-mounted fields themselves cannot be tested headless: an
+  assembled ship's shipyard chunks never start ticking without a player,
+  and VS's wait for them stalled the neighbouring test cell.
+- **FullStop, in the same pass:** repeated normal jumps dealt impact
+  damage and straight elytra flight blacked out — one flaw, in FullStop:
+  a player's server position only moves when a move packet is applied,
+  and client and server ticks drift, so one server tick saw two packets
+  (a doubled delta) and the next none (a dead stop). FullStop now
+  measures players per CLIENT tick. Its g-force thresholds moved to the
+  server config, nausea from spinning was added, blackout and nausea are
+  layered as specified, and a `minimumFallDistance` knob expresses the
+  vertical threshold in blocks. See FullStop's own changelog.
+
+## Unreleased (2.0.0-dev) — 2026-09-05 (round 86: the retest — glide start, the cast, the boat's frame, stairs on ships, the diagonal step, letting go of the wall)
+
+- **Elytra flight starts inside a ship's field.** Round 85 stopped the
+  server from ENDING a glide on its own replay's ground contact, but the
+  START command has a ground check of its own: `tryToStartFallFlying`
+  refuses when the server thinks the player is on the ground, and a refusal
+  cancels the glide the client already began. Inside a Valkyrien Skies
+  ship's field the server's replay (its ship pose a tick behind, its body
+  pulled onto the deck between move packets) reported "grounded" at the
+  very moment the client pressed jump — every attempt cancelled on the
+  spot. The start check now defers to the client's move packets exactly
+  like the two end checks (shared `clientSaysAirborne`).
+- **Casting a rod from inside a core's field flies where you aim.** Round
+  85 made the bobber world-frame in `move()` and fixed its spawn point, but
+  its initial fling stayed vanilla's: built from the player's yaw and pitch,
+  which live in the AIM frame, and now used raw as a world velocity — so
+  the cast went along the player's local "forward" read as world axes,
+  straight "below" a rotated player. The fling is rotated into world space
+  at spawn (and the hook's own yaw/pitch re-derived from it).
+- **Boats float on every face of a water cube.** Two causes. (1) An
+  ungrounded entity gets a core's CONTINUOUS radial pull, so a floating
+  boat's "up" tilted toward the core everywhere but a face's exact center —
+  and a tilted up reads the water level off the cells' corners: the boat
+  was lifted out, dropped back, and driven under. Boats are now
+  sector-cardinalized like grounded mobs (face-normal gravity, a level
+  water surface), on both sides. (2) The server replays the client's boat
+  move through the BOAT's `Entity.move`, whose argument is the boat's local
+  convention, but converted the packet's world delta through the RIDER's
+  aim frame — whenever the two differed (a boat settling on a face while
+  the rider's frame still chased it) the replay landed elsewhere, "moved
+  wrongly", and the boat was snapped back every tick. The conversion now
+  uses the vehicle's own convention (`GravityChangerAPI.worldToMovement`).
+- **Stairs, slabs and directional blocks place right on Valkyrien Skies
+  ships.** VS wraps `getStateForPlacement` in a temporary transform that
+  rewrites the placer's yaw/pitch into SHIP-GRID look angles (from the
+  gravity-aware world look) and their position into shipyard coordinates.
+  This mod's look-direction mixins (`Entity.getDirection`,
+  `Direction.orderedByNearest`/`getFacingAxis`, `UseOnContext.getRotation`)
+  then rotated those angles through the player's gravity frame AGAIN —
+  every stair on a rotated ship faced the wrong way. A ship-placement
+  window (`PlacementFrame.inShipPlacement`, opened by `BlockItemMixin`
+  around the same call VS wraps) passes the raw angles through untouched.
+  The round-85 half decision is now judged in the block grid too: the
+  player's up and the (world-space) click location are re-expressed in the
+  ship's grid before the vanilla rule runs.
+- **Stepping onto a slab while strafing along a wall.** The step assist only
+  tried when less than 70% of the tangential motion survived the collision —
+  and a diagonal walk (into the wall AND sideways toward the slab) keeps its
+  free sideways component, about 71% of the diagonal, so the slab never
+  triggered a step until the player backed off and walked straight at it.
+  The trigger now projects the achieved motion onto the INTENDED direction
+  (the blocked component shows as 50% there) and still ignores the small
+  shave a slightly tilted floor takes off every tick.
+- **Letting go of a wall leaves the wall.** Boots off (or walking off the
+  edge) while clung to a wall released the hold, but the frame turns about
+  the FEET point, which stands ON the wall: once upright, the capsule — and
+  then vanilla's box — was centered on a point in the wall's plane, half
+  inside the wall. Suffocation damage while the frame swung, then a box
+  vanilla never pushes out: hanging against the wall until the player moved
+  away by hand. `releaseCling` now steps the feet off the released face by
+  exactly what the upright body needs (the capsule radius, less for a
+  slope), on both sides.
+- **Minecarts stay pinned to rotated sticky rails.** Found by the new
+  server game test: the cart's frame flipped upright every 40 ticks. A cart
+  on a rotated rail keeps its own plain gravity and holds its frame through
+  the rail logic's visual override alone, which the capsule exit watchdog
+  did not count as an influence — so every two seconds it "forced the
+  exit" (re-expressing the cart's velocity and syncing a vanilla frame), and
+  the rail logic pinned the cart again a tick later. The override now
+  counts. The renderer's track alignment (`getPos`/`getPosOffs`, which read
+  the rail shape as a world-frame track) is switched off while riding a
+  rotated rail: the model draws at the cart's position with its own local
+  yaw, laid onto the track bed by the pinned frame.
+- **Headless game tests.** `gradlew runGameTestServer` now runs
+  `GravityGameTests` (boat on a water cube's side face, minecart on a wall
+  sticky rail) against an empty 20³ template; each logs its subject every
+  20 ticks under `[GravityUnbound/test]`.
+
 ## Unreleased (2.0.0-dev) — 2026-09-05 (round 85: the bobber, the stutter, the slime, the boots, the boat, the corner rail)
 
 - **Projectiles are world-frame in `move()` too — the fishing bobber no

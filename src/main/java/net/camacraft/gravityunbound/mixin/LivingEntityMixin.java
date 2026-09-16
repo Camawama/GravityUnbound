@@ -551,8 +551,15 @@ public abstract class LivingEntityMixin extends Entity {
         )
     )
     private void gravityunbound$keepClientFlight(LivingEntity self, int flag, boolean value, Operation<Void> original) {
-        if (flag == 7 && !value && gravityunbound$clientSaysAirborne(self)) {
-            return;
+        if (flag == 7 && !value) {
+            net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
+                GravityChangerAPI.getGravityComponentOrNull(self);
+            if (comp != null && comp.clientSaysAirborne()) {
+                return;
+            }
+            if (comp != null) {
+                comp.debugFlightEnd("travel/onGround", self.onGround());
+            }
         }
         original.call(self, flag, value);
     }
@@ -568,17 +575,21 @@ public abstract class LivingEntityMixin extends Entity {
         if (gravityunbound$clientSaysAirborne(self)) {
             return false;
         }
-        return original.call(self);
+        boolean grounded = original.call(self);
+        if (grounded && self.isFallFlying()) {
+            net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
+                GravityChangerAPI.getGravityComponentOrNull(self);
+            if (comp != null) {
+                comp.debugFlightEnd("updateFallFlying/onGround", true);
+            }
+        }
+        return grounded;
     }
 
     @org.spongepowered.asm.mixin.Unique
     private static boolean gravityunbound$clientSaysAirborne(LivingEntity self) {
-        if (self.level().isClientSide() || !(self instanceof net.minecraft.server.level.ServerPlayer)) {
-            return false;
-        }
         net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
             GravityChangerAPI.getGravityComponentOrNull(self);
-        return comp != null && comp.isMovementClientAuthoritative()
-            && comp.clientOnGroundAge < 5 && !comp.clientOnGround;
+        return comp != null && comp.clientSaysAirborne();
     }
 }

@@ -8,6 +8,8 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import com.llamalad7.mixinextras.injector.ModifyReturnValue;
@@ -30,26 +32,32 @@ public abstract class ThrowableProjectileMixin {
         return GravityChangerAPI.getGravityDirection((ThrownEntity)(Object)this);
     }*/
     
-    @ModifyVariable(
+    // Vanilla ends tick() with: vec31 = getDeltaMovement(); setDeltaMovement(vec31.x, vec31.y - gravity, vec31.z).
+    // Re-aim that world-down pull along the CONTINUOUS field vector (cardinal
+    // fallback) for smooth orbits. This wraps the gravity write itself: the
+    // earlier form modified the tick's FIRST velocity local - the one the
+    // POSITION is integrated with - so every rotated-gravity throwable also
+    // drifted world-up by its gravity constant (0.03 blocks) each tick, on
+    // top of leading its own acceleration by a tick.
+    @WrapOperation(
         method = "Lnet/minecraft/world/entity/projectile/ThrowableProjectile;tick()V",
         at = @At(
-            value = "STORE"
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/projectile/ThrowableProjectile;setDeltaMovement(DDD)V"
         )
-        , ordinal = 0
     )
-    public Vec3 tick(Vec3 modify) {
-        ThrowableProjectile self = (ThrowableProjectile) (Object) this;
+    private void gravityunbound$gravityAlongField(ThrowableProjectile self, double x, double y, double z, Operation<Void> original) {
         net.minecraft.core.Direction cardinal = GravityChangerAPI.getGravityDirection(self);
         if (cardinal == net.minecraft.core.Direction.DOWN) {
-            return modify;
+            original.call(self, x, y, z);
+            return;
         }
-        // pre-cancel vanilla's world-down gravity, re-apply along the
-        // CONTINUOUS field vector (cardinal fallback) for smooth orbits
         double g = this.getGravity();
         Vec3 pull = GravityChangerAPI.getFieldPullDirection(self);
-        return modify.add(0.0, g, 0.0).add(pull.scale(g));
+        // cancel vanilla's world -y (already subtracted from y), apply along the field
+        original.call(self, x + pull.x * g, y + g + pull.y * g, z + pull.z * g);
     }
-    
+
     // Vanilla's (EntityType, LivingEntity, Level) constructor spawns at
     // (ownerX, ownerEyeY - 0.1, ownerZ), which assumes world-down gravity.
     // Recreate the eye-relative offset in the owner's aim frame (same pattern as

@@ -17,6 +17,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -200,6 +201,37 @@ public abstract class AbstractMinecartMixin extends Entity {
             double dy = this.getPassengersRidingOffset() + passenger.getMyRidingOffset();
             Vec3 offset = RotationUtil.vecPlayerToWorld(new Vec3(0.0, dy, 0.0), comp.getCurrentRotation());
             moveFunction.accept(passenger, this.getX() + offset.x, this.getY() + offset.y, this.getZ() + offset.z);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // rendering on a rotated rail
+    // ------------------------------------------------------------------
+
+    /**
+     * Vanilla's renderer aligns the cart model to the track through
+     * {@code getPos}/{@code getPosOffs}, which read the rail SHAPE as a
+     * world-frame rail. On a rotated sticky rail those positions are
+     * nonsense (a flat track at the cell's world Y), and applied inside the
+     * pinned pose they shoved and twisted the model off the wall. While
+     * riding a rotated rail the lookups report "no track": the model then
+     * draws at the cart's own position with its own local yaw, and the
+     * pinned visual frame lays it onto the track bed. The mod's rail physics
+     * never uses these (it ports its own rail-frame version).
+     */
+    @Inject(method = "getPos", at = @At("HEAD"), cancellable = true)
+    private void gravityunbound$noWorldTrackPos(double x, double y, double z, CallbackInfoReturnable<Vec3> cir) {
+        Direction bottom = gravityunbound$railBottom;
+        if (bottom != null && bottom != Direction.DOWN) {
+            cir.setReturnValue(null);
+        }
+    }
+
+    @Inject(method = "getPosOffs", at = @At("HEAD"), cancellable = true)
+    private void gravityunbound$noWorldTrackPosOffs(double x, double y, double z, double offset, CallbackInfoReturnable<Vec3> cir) {
+        Direction bottom = gravityunbound$railBottom;
+        if (bottom != null && bottom != Direction.DOWN) {
+            cir.setReturnValue(null);
         }
     }
 

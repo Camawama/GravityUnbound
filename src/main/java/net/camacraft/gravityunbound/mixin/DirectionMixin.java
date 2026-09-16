@@ -2,6 +2,7 @@ package net.camacraft.gravityunbound.mixin;
 
 
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
+import net.camacraft.gravityunbound.util.PlacementFrame;
 import net.camacraft.gravityunbound.util.RotationUtil;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -12,6 +13,11 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
 
+/**
+ * Look-direction ordering in the player's gravity frame. Inside the ship-
+ * placement window the raw angles are already ship-grid look angles (see
+ * {@link PlacementFrame#inShipPlacement()}) and pass through untouched.
+ */
 @Mixin(value = Direction.class, priority = 1001)
 public abstract class DirectionMixin {
     @WrapOperation(
@@ -23,7 +29,7 @@ public abstract class DirectionMixin {
         )
     )
     private static float wrapOperation_getEntityFacingOrder_getYaw_0(Entity entity, float tickDelta, Operation<Float> original) {
-        if (GravityChangerAPI.isAimDefault(entity)) {
+        if (GravityChangerAPI.isAimDefault(entity) || PlacementFrame.inShipPlacement()) {
             return original.call(entity, tickDelta);
         }
 
@@ -39,7 +45,7 @@ public abstract class DirectionMixin {
         )
     )
     private static float wrapOperation_getEntityFacingOrder_getPitch_0(Entity entity, float tickDelta, Operation<Float> original) {
-        if (GravityChangerAPI.isAimDefault(entity)) {
+        if (GravityChangerAPI.isAimDefault(entity) || PlacementFrame.inShipPlacement()) {
             return original.call(entity, tickDelta);
         }
 
@@ -55,7 +61,7 @@ public abstract class DirectionMixin {
         )
     )
     private static float wrapOperation_getLookDirectionForAxis_getYaw_0(Entity entity, float tickDelta, Operation<Float> original) {
-        if (GravityChangerAPI.isAimDefault(entity)) {
+        if (GravityChangerAPI.isAimDefault(entity) || PlacementFrame.inShipPlacement()) {
             return original.call(entity, tickDelta);
         }
 
@@ -71,7 +77,7 @@ public abstract class DirectionMixin {
         )
     )
     private static float wrapOperation_getLookDirectionForAxis_getYaw_1(Entity entity, float tickDelta, Operation<Float> original) {
-        if (GravityChangerAPI.isAimDefault(entity)) {
+        if (GravityChangerAPI.isAimDefault(entity) || PlacementFrame.inShipPlacement()) {
             return original.call(entity, tickDelta);
         }
 
@@ -87,7 +93,7 @@ public abstract class DirectionMixin {
         )
     )
     private static float wrapOperation_getLookDirectionForAxis_getPitch_0(Entity entity, float tickDelta, Operation<Float> original) {
-        if (GravityChangerAPI.isAimDefault(entity)) {
+        if (GravityChangerAPI.isAimDefault(entity) || PlacementFrame.inShipPlacement()) {
             return original.call(entity, tickDelta);
         }
 

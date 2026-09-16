@@ -195,11 +195,15 @@ public abstract class ServerGamePacketListenerImplMixin {
         index = 1
     )
     private Vec3 modify_onVehicleMove_move_0(Vec3 vec3d) {
-        if (GravityChangerAPI.isAimDefault(this.player)) {
-            return vec3d;
-        }
-
-        return RotationUtil.vecWorldToPlayer(vec3d, GravityChangerAPI.getAimRotation(this.player));
+        // The server replays the client's vehicle move through the VEHICLE's
+        // Entity.move, whose argument is the vehicle's local deltaMovement
+        // convention (EntityMixin): the settled-cardinal entity convention
+        // for a non-player at rest in a cardinal frame, its visual frame
+        // otherwise. Converting through the RIDER's aim frame instead sent
+        // the replay elsewhere whenever the two frames differed (a boat
+        // settling on a face while the rider's frame still chased it) — a
+        // "moved wrongly" rejection that snapped the boat back every tick.
+        return GravityChangerAPI.worldToMovement(this.player.getRootVehicle(), vec3d);
     }
     
     //@ModifyVariable(

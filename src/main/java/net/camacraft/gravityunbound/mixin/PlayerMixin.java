@@ -335,4 +335,37 @@ public abstract class PlayerMixin extends LivingEntity {
         Vec3 vec3d = RotationUtil.maskPlayerToWorld(new Vec3(x, y, z), GravityChangerAPI.getGravityRotation(this));
         return original.call(instance, vec3d.x, vec3d.y, vec3d.z);
     }
+    // ------------------------------------------------------------------
+    // elytra flight is the CLIENT's to start, too
+    // ------------------------------------------------------------------
+
+    /**
+     * The start-gliding command is refused when the server finds the player
+     * on the ground, and a refusal stops the glide the client already began.
+     * Inside a Valkyrien Skies ship's field the server's own replay of the
+     * player's fall (its ship pose a tick apart from the client's, its body
+     * pulled onto the deck between move packets) reported "grounded" at the
+     * very moment the client pressed jump to glide — every attempt cancelled
+     * on the spot. While the client's move packets say airborne, they decide
+     * here exactly as they do for ending the glide (LivingEntityMixin).
+     */
+    @WrapOperation(
+        method = "tryToStartFallFlying",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/player/Player;onGround()Z"
+        )
+    )
+    private boolean gravityunbound$clientGroundBlocksGlideStart(Player self, Operation<Boolean> original) {
+        net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
+            GravityChangerAPI.getGravityComponentOrNull(self);
+        if (comp != null && comp.clientSaysAirborne()) {
+            return false;
+        }
+        boolean grounded = original.call(self);
+        if (grounded && comp != null) {
+            comp.debugFlightEnd("tryToStartFallFlying/onGround", true);
+        }
+        return grounded;
+    }
 }

@@ -31,8 +31,11 @@ public abstract class FishinghookMixin extends Entity {
     // Vanilla positions the hook at (x - f3*0.3, eyeY, z - f2*0.3): the player's eye height with
     // a 0.3-block horizontal offset derived from the local yaw, all applied on world axes.
     // For rotated players, rebuild the same offset in the aim frame around the true (gravity
-    // aware) eye position. Only the spawn position is corrected here; the initial fling
-    // velocity keeps its vanilla angular offsets.
+    // aware) eye position, and turn the fling itself into world space: vanilla builds it
+    // from the player's yaw/pitch, which live in the AIM frame, and the hook is a WORLD-frame
+    // projectile (its move() no longer rotates it) — used raw, a cast from inside a core's
+    // field flew along the player's local "forward" read as world axes, i.e. straight
+    // "below" them.
     @Inject(
         method = "<init>(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/level/Level;II)V",
         at = @At("TAIL")
@@ -49,6 +52,13 @@ public abstract class FishinghookMixin extends Entity {
             (double) (-f3) * 0.3D, 0.0D, (double) (-f2) * 0.3D, GravityChangerAPI.getAimRotation(player)
         ));
         this.setPos(pos.x, pos.y, pos.z);
+
+        Vec3 fling = RotationUtil.vecPlayerToWorld(this.getDeltaMovement(), GravityChangerAPI.getAimRotation(player));
+        this.setDeltaMovement(fling);
+        this.setYRot((float) (Mth.atan2(fling.x, fling.z) * (double) (180F / (float) Math.PI)));
+        this.setXRot((float) (Mth.atan2(fling.y, fling.horizontalDistance()) * (double) (180F / (float) Math.PI)));
+        this.yRotO = this.getYRot();
+        this.xRotO = this.getXRot();
     }
 
 

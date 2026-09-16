@@ -167,7 +167,17 @@ public final class CapsuleCollider {
             Vec3 tangentIntended = rejectFrom(movement, up);
             Vec3 tangentAchieved = rejectFrom(collided, up);
             double intendedLen = tangentIntended.length();
-            if (intendedLen > 1.0E-5 && tangentAchieved.length() < intendedLen * 0.7) {
+            // Attempt whenever the motion was held back ALONG the intended
+            // direction. The old test compared lengths (achieved < 70% of
+            // intended), which a diagonal walk defeats: strafing along a
+            // wall into a slab keeps the free sideways component — about
+            // 71% of the diagonal — so the slab never triggered a step until
+            // the player backed off and walked straight at it. Projecting
+            // the achieved motion onto the intended direction sees the
+            // blocked component (50% there) and still ignores the small
+            // shave a slightly tilted floor takes off every tick.
+            double achievedAlong = intendedLen > 1.0E-5 ? tangentAchieved.dot(tangentIntended) / intendedLen : 0.0;
+            if (intendedLen > 1.0E-5 && achievedAlong < intendedLen * 0.9) {
                 ResolveState stepState = new ResolveState();
                 stepState.gravityUp = gravityUp;
                 Vec3 lift = up.scale(stepHeight);

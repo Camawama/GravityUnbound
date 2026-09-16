@@ -2,6 +2,7 @@ package net.camacraft.gravityunbound.util;
 
 import java.util.Optional;
 
+import net.camacraft.gravityunbound.api.GravityBlockHelper;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 
 import net.minecraft.core.Direction;
@@ -36,15 +37,58 @@ public final class PlacementFrame {
         if (player == null || GravityChangerAPI.isAimDefault(player)) {
             return Optional.empty();
         }
-        Vec3 up = GravityChangerAPI.getUpVector(player);
+        // everything in the BLOCK GRID of the placement: on a Valkyrien
+        // Skies ship the clicked position and face are already shipyard
+        // values, the click location is world space, and the player's up is
+        // world space — re-express the two world vectors in the ship's grid
+        // (unchanged off ships)
+        Vec3 up = GravityBlockHelper.worldDirectionToGrid(
+            context.getLevel(), context.getClickedPos(), GravityChangerAPI.getUpVector(player));
         if (Math.abs(up.y) < 0.5) {
-            return Optional.empty(); // a wall-walker: no world half means "theirs"
+            return Optional.empty(); // a wall-walker: no grid half means "theirs"
         }
         Direction face = context.getClickedFace();
         double faceUp = face.getStepX() * up.x + face.getStepY() * up.y + face.getStepZ() * up.z;
         Vec3 center = Vec3.atCenterOf(context.getClickedPos());
-        double alongUp = context.getClickLocation().subtract(center).dot(up);
+        Vec3 click = GravityBlockHelper.worldPositionToGrid(
+            context.getLevel(), context.getClickedPos(), context.getClickLocation());
+        double alongUp = click.subtract(center).dot(up);
         return Optional.of(new Frame(up, up.y < 0, faceUp, alongUp));
+    }
+
+    // ------------------------------------------------------------------
+    // the ship-placement window
+    // ------------------------------------------------------------------
+
+    private static final ThreadLocal<int[]> SHIP_PLACEMENT_DEPTH = ThreadLocal.withInitial(() -> new int[1]);
+
+    /**
+     * True while a block is being placed ON A VALKYRIEN SKIES SHIP — inside
+     * {@code getStateForPlacement} and everything it calls. Valkyrien Skies
+     * wraps that call in its temporary player transform: the placer's yaw
+     * and pitch are rewritten to SHIP-GRID look angles (derived from the
+     * gravity-aware world look) and its position to shipyard coordinates.
+     * This mod's look-direction mixins ({@code Entity.getDirection},
+     * {@code Direction.orderedByNearest}/{@code getFacingAxis},
+     * {@code UseOnContext.getRotation}) rotate the raw angles through the
+     * player's gravity frame; applied to angles that already include the
+     * ship's rotation they double-rotated, and every stair on a rotated
+     * ship faced the wrong way. Inside the window the raw angles ARE the
+     * grid look and pass through untouched.
+     */
+    public static boolean inShipPlacement() {
+        return SHIP_PLACEMENT_DEPTH.get()[0] > 0;
+    }
+
+    public static void enterShipPlacement() {
+        SHIP_PLACEMENT_DEPTH.get()[0]++;
+    }
+
+    public static void exitShipPlacement() {
+        int[] depth = SHIP_PLACEMENT_DEPTH.get();
+        if (depth[0] > 0) {
+            depth[0]--;
+        }
     }
 
     /**

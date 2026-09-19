@@ -29,11 +29,26 @@ public class UpdateGravityCapabilityPacket
 	// (or plain world-down) and every position packet corrected them.
 	@Nullable
 	private final Vec3 targetGravityVector;
+	// RUNNING TOTAL of every frame-yaw re-parametrization the server has
+	// applied to this entity, in radians.
+	//
+	// A re-parametrization twists the frame and shifts the yaw by the same
+	// amount, so nothing moves — but only the FRAME crosses the wire, and for
+	// an entity whose yaw the client owns (a ridden vehicle) the server's half
+	// of the pair is discarded on the next ServerboundMoveVehiclePacket. The
+	// client received a twisted frame with its old yaw and the vehicle turned.
+	//
+	// A TOTAL rather than a per-event delta, because a total is idempotent: a
+	// coalesced, duplicated or reordered packet converges on the same answer,
+	// where a sequence of deltas silently loses or double-applies one. The
+	// client stores the last value it saw and applies the difference.
+	private final double frameYawReparam;
 
 	public UpdateGravityCapabilityPacket(boolean noAnimation, UUID entityUUID, Vec3 baseGravityDirection, Vec3 currentGravityDirection,
 										 double baseGravityStrength, double currentGravityStrength, Quaternionf rotation,
-										 @Nullable Vec3 targetGravityVector)
+										 @Nullable Vec3 targetGravityVector, double frameYawReparam)
 	{
+		this.frameYawReparam = frameYawReparam;
 		this.noAnimation = noAnimation;
 		this.entityUUID = entityUUID;
 		this.baseGravityDirection = baseGravityDirection;
@@ -53,6 +68,7 @@ public class UpdateGravityCapabilityPacket
 		this.baseGravityStrength = buf.readDouble();
 		this.currentGravityStrength = buf.readDouble();
 		this.rotation = new Quaternionf(buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readFloat());
+		this.frameYawReparam = buf.readDouble();
 		if (buf.readBoolean())
 		{
 			this.targetGravityVector = new Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble());
@@ -79,6 +95,7 @@ public class UpdateGravityCapabilityPacket
 		buf.writeFloat(this.rotation.y());
 		buf.writeFloat(this.rotation.z());
 		buf.writeFloat(this.rotation.w());
+		buf.writeDouble(this.frameYawReparam);
 		buf.writeBoolean(this.targetGravityVector != null);
 		if (this.targetGravityVector != null)
 		{
@@ -107,6 +124,10 @@ public class UpdateGravityCapabilityPacket
 						}
 						entity.getCapability(GravityCapabilities.GRAVITY).ifPresent(cap ->
 						{
+							// BEFORE sync: the yaw pairing belongs with the frame
+							// the server had when it re-parametrized, and sync
+							// adopts the new one.
+							cap.syncFrameYawReparam(message.frameYawReparam);
 							cap.sync(message.noAnimation, message.baseGravityDirection, message.currentGravityDirection,
 								message.baseGravityStrength, message.currentGravityStrength, message.rotation,
 								message.targetGravityVector);

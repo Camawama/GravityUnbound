@@ -326,8 +326,27 @@ public class GravityCoreBlockEntity extends BlockEntity
             // back in and finally driven under. Sector-cardinal like a
             // grounded mob: face-normal gravity, a level water surface.
             boolean cardinalized = false;
+            // A HELD SURFACE COUNTS AS STANDING ON ONE.
+            //
+            // isGroundedInFrame is capsuleGrounded in capsule mode, and that is
+            // written in exactly one place: the Entity.collide injector. The
+            // server never calls move()/collide() on a vehicle a player is
+            // driving -- its position arrives by packet -- so for a driven kart
+            // the flag is false forever (measured: 0 true in 370 capsule-mode
+            // server samples). Boats were special-cased for the same reason.
+            //
+            // Without cardinalization the kart gets the raw RADIAL pull, and
+            // effectiveTargetUp then keeps it pinned to the stale surface normal
+            // across the whole window where that normal still roughly agrees
+            // with the field -- which is the "gravity switches a beat late when
+            // I cross an edge, so I fall down the new face first" from play.
+            //
+            // getHeldSurfaceNormal comes from ray probes rather than collision,
+            // so it works on a side that never runs collide().
             if (!(entity instanceof net.minecraft.world.entity.player.Player)
-                && (comp.isGroundedInFrame() || entity instanceof net.minecraft.world.entity.vehicle.Boat)) {
+                && (comp.isGroundedInFrame()
+                    || comp.getHeldSurfaceNormal() != null
+                    || entity instanceof net.minecraft.world.entity.vehicle.Boat)) {
                 direction = cardinalDirection(direction);
                 cardinalized = true;
             }

@@ -399,6 +399,46 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
     }
 
+    /**
+     * Diagnostic: a RIDDEN vehicle under gravity influence, logged once a
+     * second from BOTH sides. Mounting hands a boat's movement from the
+     * server to the rider's client, and the client computes no gravity of
+     * its own for a non-player entity ({@code shouldAcceptServerSync}
+     * returns at the top of updateGravityStatus) — so the two sides run the
+     * same body on different state, and a "the moment I drove it, it sank
+     * into the ground and lost its rotation" report cannot be read off
+     * either side alone. Prints what each side believes: who owns the
+     * movement, the frame and what it is chasing, the field state behind it,
+     * the ground verdict, and whether the body would be inside blocks if it
+     * stood upright right now.
+     */
+    private void debugRiddenVehicle() {
+        if (entity instanceof Player || !entity.isVehicle() || entity.tickCount % 20 != 3
+            || (fieldGraceTicks <= 0 && isVisuallyDefault())) {
+            return;
+        }
+        net.minecraft.world.phys.AABB upright =
+            entity.getDimensions(entity.getPose()).makeBoundingBox(entity.position());
+        Vec3 targetUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualTarget);
+        LOGGER.info("[GravityUnbound] ridden[{}] {}: ownedHere={} pos={} up={} targetUp={} visualDefault={} dir={} "
+                + "grace={} field={} held={} onGround={} capsuleGrounded={} capsule={} dmLocal={} uprightClear={}",
+            entity.level().isClientSide() ? "C" : "S",
+            entity.getName().getString(),
+            entity.level().isClientSide() ? entity.isControlledByLocalInstance() : "server",
+            entity.position(),
+            String.format(java.util.Locale.ROOT, "(%.2f,%.2f,%.2f)",
+                getUpVector().x, getUpVector().y, getUpVector().z),
+            String.format(java.util.Locale.ROOT, "(%.2f,%.2f,%.2f)", targetUp.x, targetUp.y, targetUp.z),
+            isVisuallyDefault(), currGravityDirection, fieldGraceTicks,
+            targetGravityVector == null ? "null" : String.format(java.util.Locale.ROOT,
+                "(%.2f,%.2f,%.2f)", targetGravityVector.x, targetGravityVector.y, targetGravityVector.z),
+            lastGroundNormal == null ? "null" : String.format(java.util.Locale.ROOT,
+                "(%.2f,%.2f,%.2f)", lastGroundNormal.x, lastGroundNormal.y, lastGroundNormal.z),
+            entity.onGround(), capsuleGrounded, useCapsuleCollision(),
+            entity.getDeltaMovement(),
+            entity.level().noCollision(entity, upright.deflate(0.02)));
+    }
+
     public boolean clientSaysAirborne() {
         return entity instanceof net.minecraft.server.level.ServerPlayer
             && !entity.level().isClientSide()
@@ -430,10 +470,17 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // sphere collision in the plain world
     private int capsuleNoInfluenceTicks = 0;
 
-    // whether the frame's chase target was plain world up last tick; the
-    // RISING edge is the release clearBlocksOnFieldExit steps the body off
-    // the face on. Starts true: an entity spawns heading nowhere.
-    private boolean frameTargetWasUpright = true;
+    // consecutive ticks the frame's chase target has been plain world up;
+    // a SUSTAINED run of them is the release clearBlocksOnFieldExit steps
+    // the body off the face on.
+    private int frameUprightTicks = 0;
+    // Fired on the FIRST upright tick, not after a wait. A dropout in field
+    // effect delivery cannot produce a false release here: the 6-tick grace
+    // and the held-surface sustain both keep targetGravityVector on the
+    // field vector across a gap, so the chase target does not go home while
+    // a field still holds the body. And being late is expensive for a
+    // PLAYER, whose eye spends every waited tick rendered inside the block.
+    private static final int FRAME_RELEASE_TICKS = 1;
     // the last frame up that was materially off world-up: the face the body
     // was resting on, kept because the frame can reach the target in the
     // very tick the release is ordered (see clearBlocksOnFieldExit)
@@ -463,6 +510,42 @@ public class GravityCapabilityImpl implements IGravityCapability {
 
     // force a sync packet on the next server tick
     public boolean needsSync = false;
+
+    /**
+     * Running total, in radians, of every frame-yaw re-parametrization this
+     * capability has applied. Server-authoritative; see
+     * {@code publishFrameYawReparam}.
+     */
+    private double frameYawReparamTotal = 0.0;
+
+    /**
+     * The last total this CLIENT has applied, or NaN before the first packet.
+     *
+     * <p>NaN is load-bearing rather than a tidy initial value: the first
+     * packet of a session, or the first after a respawn, carries whatever the
+     * server has accumulated so far, and applying all of it would spin the
+     * entity by the sum of every twist since the world loaded. The first
+     * packet is adopted, not applied.
+     */
+    private double syncedFrameYawReparam = Double.NaN;
+
+    /**
+     * Whether the current frame was derived from a ship rather than from world
+     * geometry.
+     *
+     * <p>A latch, not a live query, and that is the whole point. The obvious
+     * predicate -- "is there a held surface belonging to a ship right now" --
+     * goes false at two moments when the FRAME is still ship-derived: when the
+     * field ends (updateSurfaceProbe nulls the held surface while the vehicle
+     * is still sitting on the deck) and after {@code GROUND_NORMAL_GRACE_TICKS}
+     * of airtime over the plating. Both reopen the twist unwinding against a
+     * frame that carries a hull's rotation.
+     *
+     * <p>Set while a ship surface is held; cleared only once the frame is back
+     * to the identity, which is the honest statement of "this frame is the
+     * world's again".
+     */
+    private boolean frameFromShip = false;
     private @Nullable Direction lastSyncedDirection = null;
     private double lastSyncedStrength = 1.0;
 
@@ -626,6 +709,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             flightEndLogCooldown--;
         }
         debugShipFreeze();
+        debugRiddenVehicle();
         updateGravityStatus();
         applyGravityChange();
         applyGravityStrengthAttribute();
@@ -1181,6 +1265,25 @@ public class GravityCapabilityImpl implements IGravityCapability {
         prevGravityDirection = Direction.DOWN;
         serverDirectionDisagreeStreak = 0;
         Quaternionf canonical = RotationUtil.getWorldRotationQuaternion(Direction.DOWN);
+
+        // THE SAME ONE-SIDED SNAP AS normalizeTwist, FORTY TICKS LATER.
+        //
+        // This method is server-only for the same reason (shouldAcceptServerSync
+        // at its head), and this is the same shape of change: the frame is
+        // re-parametrized and compensateFrameChange pays the yaw. Without
+        // publishing it, gating normalizeTwist alone would simply move the
+        // reported turn two seconds down the road instead of fixing it.
+        //
+        // Measured the way normalizeTwist measures its own: the pure local-Y
+        // component of the rotation from the old frame to the new one.
+        Quaternionf reparam = new Quaternionf(old).mul(new Quaternionf(canonical).conjugate());
+        if (reparam.w() < 0) {
+            // q and -q are the same rotation; take the short way round or the
+            // atan2 below reads the reflex angle.
+            reparam.set(-reparam.x(), -reparam.y(), -reparam.z(), -reparam.w());
+        }
+        publishFrameYawReparam(2.0 * Math.atan2(reparam.y(), reparam.w()));
+
         visualRotation.set(canonical);
         visualTarget.set(canonical);
         prevVisualRotation.set(canonical);
@@ -1217,9 +1320,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * by exactly the overlap. The previous-tick position travels with it so
      * the step is neither read back as velocity nor drawn as a slide.
      *
-     * Players are excluded: their own release path already clears them, and
-     * their movement is client-authoritative through exactly this
-     * transition (see {@link #isMovementClientAuthoritative}).
+     * For a PLAYER the same geometry puts the CAMERA in the wall: the eye
+     * sits on the frame's up from the feet, so when the frame comes upright
+     * about a feet point lying in the face's plane the eye lands exactly on
+     * that plane {@code -} inside the block {@code -} and whatever pushes the
+     * body back out afterwards shoves the player along the wall. Stepping
+     * off the face before the frame turns is what keeps the eye outside it.
      */
     private void clearBlocksOnFieldExit() {
         // THE FACE IT WAS RESTING ON, remembered every tick the body is
@@ -1232,35 +1338,54 @@ public class GravityCapabilityImpl implements IGravityCapability {
             lastRotatedUp = up;
         }
 
-        // "THE FRAME IS BEING SENT HOME": the chase target is plain world up
-        // and was not last tick. Read off the FRAME, not off the field
+        // "THE FRAME IS BEING SENT HOME": the chase target is plain world up,
+        // and stays there. Read off the FRAME, not off the field
         // state, because a non-player entity computes no gravity of its own
         // on the client — shouldAcceptServerSync returns at the top of
         // updateGravityStatus, so fieldGraceTicks is a server-only number
         // there and a trigger built on it fires on one side only. The frame
         // target is synced, so both sides see this same edge.
         Vec3 targetUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualTarget);
-        boolean upright = targetUp.y > 0.999;
-        boolean wasUpright = frameTargetWasUpright;
-        frameTargetWasUpright = upright;
-        if (!upright || wasUpright) {
+        if (targetUp.y <= 0.999) {
+            frameUprightTicks = 0;
             return;
         }
+        // Fired exactly once per release (see FRAME_RELEASE_TICKS).
+        if (frameUprightTicks > FRAME_RELEASE_TICKS) {
+            return;
+        }
+        if (++frameUprightTicks < FRAME_RELEASE_TICKS) {
+            return;
+        }
+        frameUprightTicks = FRAME_RELEASE_TICKS + 1;
 
         Vec3 escape = lastRotatedUp;
-        lastRotatedUp = null;
-        if (escape == null || entity instanceof Player) {
+        if (escape == null) {
             return;
         }
-        // WHICH SIDE STEPS. The server simulates every non-player entity, so
-        // it always does. The rider's client MUST do it too for a vehicle it
-        // controls: a ridden boat's position is CLIENT-sent, so a server-side
-        // step alone is overwritten by the next ServerboundMoveVehiclePacket
-        // — which is exactly why this was reported while RIDING. Both sides
-        // stepping is safe: the step clears the overlap that is there, a
-        // clear box yields no offset at all, and both read the same synced
-        // frame, so they converge on the same place.
-        if (entity.level().isClientSide() && !entity.isControlledByLocalInstance()) {
+        lastRotatedUp = null;
+        // WHICH SIDE STEPS. A PLAYER is stepped by their own client and
+        // ONLY there: the client computes their gravity, and their movement
+        // is client-authoritative through exactly this transition (see
+        // isMovementClientAuthoritative), so a server-side step would be a
+        // rubber-band. Note isControlledByLocalInstance is useless for this
+        // — for a player it answers isEffectiveAi, which is false on the
+        // client and true on the server, the wrong way round.
+        //
+        // Everything else: the server always, since it simulates every
+        // non-player entity, and the rider's client too for a vehicle it
+        // controls — a ridden boat's position is CLIENT-sent, so a
+        // server-side step alone is overwritten by the next
+        // ServerboundMoveVehiclePacket, which is exactly why this was
+        // reported while RIDING. Both sides stepping is safe: the step
+        // clears the overlap that is there, a clear box yields no offset at
+        // all, and both read the same synced frame, so they converge.
+        if (entity instanceof Player) {
+            if (!GCUtil.isClientPlayer(entity)) {
+                return;
+            }
+        }
+        else if (entity.level().isClientSide() && !entity.isControlledByLocalInstance()) {
             return;
         }
 
@@ -1897,6 +2022,25 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * now always means standing on it; fields orient the player when airborne,
      * and walls are adopted through the explicit corner transitions.
      */
+    /**
+     * Collapses this tick's render interpolation onto the current frame.
+     *
+     * <p>For a caller that has just stepped an entity's YAW flat across a tick
+     * to absorb a frame change -- shifting {@code yRot} and {@code yRotO}
+     * together -- so that the rendered frame steps with it instead of slerping
+     * from the previous one. Without it the model is drawn at the NEW yaw in the
+     * OLD frame at partial-tick 0 and sweeps to the right answer by partial-tick
+     * 1, which reads as the body flicking sideways for a frame or two.
+     *
+     * <p>This is the same rule {@link #normalizeTwist} already applies to its
+     * own compensated steps, exposed for mods that compensate a frame change in
+     * their own entity's rotation. Harmless at any other time: it only discards
+     * one tick of interpolation that the caller has already accounted for.
+     */
+    public void collapseRenderInterpolation() {
+        prevVisualRotation.set(visualRotation);
+    }
+
     private Vec3 effectiveTargetUp(Vec3 fieldVector) {
         Vec3 targetUp = fieldVector.scale(-1);
         if (lastGroundNormal != null && lastGroundNormal.dot(targetUp) > SUPPORT_KEEP_DOT) {
@@ -2134,6 +2278,113 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
 
+        // A PASSENGER WEARS ITS VEHICLE'S FRAME.
+        //
+        // updateGravityStatus already hands a rider the vehicle's cardinal and
+        // field vector; the frame was the one thing left for the rider to work
+        // out for itself -- by a DIFFERENT construction (parallel transport,
+        // rate limited to VISUAL_TURN_PER_TICK) from a non-living vehicle's
+        // (cardinal anchored, and stepped in a single tick). Across a 90 degree
+        // field the two sat up to 90 degrees apart for the six to ten ticks the
+        // rider's chase took, so the rider sat visibly askew in a vehicle that
+        // had already turned -- and normalizeTwist then removed the residue in
+        // one step, which is a snap.
+        //
+        // A rider stands on nothing: the vehicle owns the gravity for both of
+        // them. So take the vehicle's frame verbatim, in the tick it changes.
+        // Restricted to a non-living vehicle, which is what a vehicle with a
+        // frame of its own is -- a player riding another player keeps today's
+        // behaviour.
+        Entity ridden = entity.getVehicle();
+        if (ridden != null && !(ridden instanceof LivingEntity)) {
+            GravityCapabilityImpl riddenComp =
+                GravityChangerAPI.getGravityComponentOrNull(ridden);
+            if (riddenComp != null) {
+                Quaternionf wasRiding = new Quaternionf(visualRotation);
+                visualTarget.set(riddenComp.getVisualRotation());
+                visualRotation.set(visualTarget);
+                lastChaseTarget.set(visualTarget);
+                if (!wasRiding.equals(visualRotation)) {
+                    // The vehicle's frame stepped. Carry the rider's look with
+                    // it so the world-space view direction is unchanged -- and
+                    // SWEEP that carry across the tick instead of collapsing
+                    // the interpolation onto it.
+                    //
+                    // prevVisualRotation is the interpolation START that
+                    // getRenderRotation slerps from, and it has an equality
+                    // fast path: set it equal to visualRotation and the render
+                    // frame stops interpolating entirely. Doing that every tick
+                    // the vehicle turned made the rider's camera a STEP
+                    // function at tick rate -- fifteen degrees at a time, 20 Hz,
+                    // no matter the frame rate. Reported from play as the
+                    // rotation "running at a lower frame rate" on a machine
+                    // holding over 200 fps.
+                    //
+                    // It was collapsed because compensateFrameChange shifts
+                    // yRot AND yRotO by the same delta, so the compensation is
+                    // fully present at partial tick zero and does not sweep --
+                    // leaving the frame to sweep alone reads as a flick. The
+                    // answer is to let BOTH sweep: keep yRot shifted, put yRotO
+                    // back. Then the yaw interpolates old -> compensated while
+                    // the frame interpolates prev -> current, and for a pure
+                    // twist the two cancel identically at every partial tick,
+                    // which is the same argument normalizeTwist already relies
+                    // on. For a tilt the delta is near zero and there is
+                    // nothing to cancel either way.
+                    //
+                    // EXCEPT WHEN THE STEP IS BIG, and then sweeping is exactly
+                    // wrong. The vehicle takes the holonomy twist at a cardinal
+                    // crossing ATOMICALLY -- frame, interpolation start and yaw
+                    // all in one tick, so nothing moves on screen. A rider that
+                    // sweeps that same step instead spreads a 90 or 180 degree
+                    // turn across one tick, and at 180 the slerp's axis and the
+                    // yaw's direction are both ambiguous, so they can pick
+                    // opposite ways round: the rider spins and snaps back.
+                    // Reported from play, in slow motion, on exactly the
+                    // top/bottom-to-side transitions where that twist is
+                    // non-zero.
+                    //
+                    // So match the vehicle: adopt a big step atomically, sweep
+                    // a small one. The chase is capped at 30 degrees a tick, so
+                    // anything past 45 is a re-parametrization rather than
+                    // motion.
+                    boolean atomicStep =
+                        angleBetween(wasRiding, visualRotation) > (float) Math.toRadians(45);
+                    if (atomicStep) {
+                        prevVisualRotation.set(visualRotation);
+                    }
+
+                    float yawWas = entity.getYRot();
+                    float yawOWas = entity.yRotO;
+                    float bodyOWas = 0.0f;
+                    float headOWas = 0.0f;
+                    if (entity instanceof LivingEntity beforeLiving) {
+                        bodyOWas = beforeLiving.yBodyRotO;
+                        headOWas = beforeLiving.yHeadRotO;
+                    }
+
+                    compensateFrameChange(wasRiding, visualRotation);
+
+                    if (!atomicStep
+                        && Math.abs(Mth.wrapDegrees(entity.getYRot() - yawWas)) > 1.0E-4f) {
+                        // Small step: let the compensation sweep with the frame.
+                        // A big one keeps compensateFrameChange's own shift of
+                        // both yaws, so the whole thing lands in a single tick.
+                        entity.yRotO = yawOWas;
+                        if (entity instanceof LivingEntity afterLiving) {
+                            afterLiving.yBodyRotO = bodyOWas;
+                            afterLiving.yHeadRotO = headOWas;
+                        }
+                    }
+                }
+                // Early: there is no chase to run, no world velocity to
+                // re-express for a passenger, and no twist to unwind once the
+                // rider IS the vehicle's frame -- which is what removes the
+                // snap rather than merely moving it.
+                return;
+            }
+        }
+
         // Non-living remotes prefer the LOCALLY computed target whenever
         // local field effects are fresh: the client applies fields to them
         // itself (see the field BEs), and the synced target lags a tick or
@@ -2159,7 +2410,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
 
-        if (!(entity instanceof LivingEntity)) {
+        if (!(entity instanceof LivingEntity) && !isRiddenVehicle()) {
             // Other non-living entities (items, orbs, TNT, minecarts) have no
             // camera either: snap instantly so client and server frames are
             // equal given equal positions — the smooth chase's timing can
@@ -2322,6 +2573,17 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
 
+        // LATCHED HERE, ABOVE EVERY OTHER EARLY RETURN, because the live
+        // predicate lies at exactly the wrong moments and the latch has to be
+        // current on the tick the gate below is finally reached. See
+        // frameFromShip: the settle gate alone means most ticks return before
+        // the gate, and the one tick that does not is the one that matters.
+        if (getHeldSurfaceShip() != null) {
+            frameFromShip = true;
+        } else if (isVisuallyDefault()) {
+            frameFromShip = false;
+        }
+
         Quaternionf canonical = RotationUtil.getWorldRotationQuaternion(currGravityDirection);
         if (visualRotation.equals(canonical)) {
             return;
@@ -2340,6 +2602,35 @@ public class GravityCapabilityImpl implements IGravityCapability {
             visualTarget.set(canonical);
             prevVisualRotation.set(canonical);
             compensateFrameChange(old, visualRotation);
+            return;
+        }
+
+        // CANONICAL IS A WORLD REFERENCE. ON A SHIP THE FRAME IS NOT.
+        //
+        // Everything below measures the frame's twist against
+        // getWorldRotationQuaternion(currGravityDirection) -- one of six
+        // WORLD-axis conventions. That is the right reference for a frame
+        // derived from world geometry and the wrong one for a frame derived
+        // from a ship: a ship's frame is rebuilt from its live transform and
+        // carries the hull's own rotation, so the "twist" measured here is not
+        // a holonomy residue to be unwound, it IS the ship's heading. Removing
+        // it turns the vehicle.
+        //
+        // And the yaw half of that removal is thrown away. This method returns
+        // early under shouldAcceptServerSync(), so for a ridden vehicle only
+        // the SERVER runs it -- while the sync packet carries visualTarget and
+        // no yaw, and a ridden vehicle's yaw is client-authoritative. The
+        // client therefore receives the untwisted frame and keeps its own yaw,
+        // and the world heading turns by the whole twist. Reported from play
+        // as the yaw snapping to a world-axis 90 degrees when driving from one
+        // gravity-plated face of a 45-degree ship onto another.
+        //
+        // Gated on being ON A SHIP rather than on a tilt threshold, because
+        // the failure is not about steepness: a LEVEL hull yawed off the world
+        // axes has a tilt of zero and a twist equal to its entire yaw, which
+        // is the worst case rather than an exempt one. Off a ship, nothing
+        // here changes.
+        if (frameFromShip) {
             return;
         }
 
@@ -2384,6 +2675,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
         prevVisualRotation.premul(delta).normalize();
         visualTarget.premul(delta).normalize();
         compensateFrameChange(old, visualRotation);
+        // ...AND TELL THE CLIENT. This method is server-only for anything but
+        // the client player, and the yaw half above never reaches the owner of
+        // a ridden vehicle's yaw -- the server's own write is overwritten by
+        // the next ServerboundMoveVehiclePacket. Without this the frame
+        // arrives untwisted, the yaw does not move, and the vehicle's heading
+        // turns by the whole twist a moment after a field release settles.
+        publishFrameYawReparam(twist);
     }
 
     /**
@@ -2391,6 +2689,67 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * world-space look direction and world-space velocity are preserved exactly
      * — the camera and motion do not move at all.
      */
+    /**
+     * Records a frame-yaw re-parametrization so the client can apply the yaw
+     * half of it.
+     *
+     * <p>Call this wherever the frame is twisted about its own up and
+     * {@code compensateFrameChange} pays for it with a yaw shift. On the
+     * server that pair is exact and invisible; across the wire only the frame
+     * survives, so the yaw has to be sent as well or the entity turns.
+     *
+     * <p>Only the server accumulates. The client player re-parametrizes
+     * locally and needs nothing.
+     *
+     * @param twistRadians the twist REMOVED from the frame, matching the sign
+     *                     the caller passed to {@code rotationY(-twist)}
+     */
+    private void publishFrameYawReparam(double twistRadians) {
+        if (entity == null || entity.level().isClientSide()) {
+            return;
+        }
+        if (!Double.isFinite(twistRadians) || Math.abs(twistRadians) < 1.0E-6) {
+            return;
+        }
+        frameYawReparamTotal += twistRadians;
+        needsSync = true;
+    }
+
+    @Override
+    public void syncFrameYawReparam(double total) {
+        if (!Double.isFinite(total)) {
+            return;
+        }
+        // The client player owns its own frame and does its own unwinding.
+        if (GCUtil.isClientPlayer(entity)) {
+            syncedFrameYawReparam = total;
+            return;
+        }
+        if (Double.isNaN(syncedFrameYawReparam)) {
+            syncedFrameYawReparam = total;   // first packet: adopt, do not apply
+            return;
+        }
+        double delta = total - syncedFrameYawReparam;
+        syncedFrameYawReparam = total;
+        if (Math.abs(delta) < 1.0E-6) {
+            return;
+        }
+
+        // The same operation the server did, so the two agree exactly. The
+        // frame halves are applied for consistency within this tick;
+        // syncedVisualTarget is deliberately NOT touched, because sync()
+        // overwrites it from this very packet a moment later.
+        Quaternionf twistDelta = new Quaternionf().rotationY((float) -delta);
+        Quaternionf old = new Quaternionf(visualRotation);
+        visualRotation.premul(twistDelta).normalize();
+        prevVisualRotation.premul(twistDelta).normalize();
+        visualTarget.premul(twistDelta).normalize();
+        if (lastChaseTarget != null) {
+            lastChaseTarget.premul(twistDelta).normalize();
+        }
+        compensateFrameChange(old, visualRotation);
+    }
+
     private void compensateFrameChange(Quaternionf oldFrame, Quaternionf newFrame) {
         // A pure twist never changes pitch, so compute the yaw delta from the
         // HORIZONTAL look direction (pitch 0). Using the real pitched look would
@@ -2441,13 +2800,140 @@ public class GravityCapabilityImpl implements IGravityCapability {
         Vec3 target = targetGravityVector != null && targetGravityVector.lengthSqr() > 1.0E-6
             ? targetGravityVector.normalize() : cardinal;
 
+        if (isRiddenVehicle()) {
+            // A RIDDEN VEHICLE TRANSPORTS ITS FRAME, it does not rebuild it.
+            //
+            // The cardinal-anchored construction below sets the frame to
+            // canonical(cardinal) composed with the tilt onto the field. The
+            // canonical frame for a cardinal carries an ARBITRARY twist about
+            // its own down -- canonical(EAST) is a 120 degree rotation, a full
+            // ninety degrees of twist away from the minimal turn. Rebuilding
+            // the target from it therefore injects that twist, and since the
+            // body's yaw NUMBER does not change, the twist comes straight out
+            // as a swing of its heading in the world: drive into a sideways
+            // field and the vehicle turns a direction nobody asked for.
+            //
+            // Parallel transport instead: rotate ONLY by the change in up,
+            // introducing no twist at all, so the world heading is preserved
+            // with no compensation anywhere. This is the same construction the
+            // living path below uses, and for the same reason -- there is a
+            // camera riding on this frame. The residual twist against the
+            // canonical yaw reference is unwound later by normalizeTwist, which
+            // re-parametrizes frame and yaw together and so is invisible.
+            Vec3 riddenUp = effectiveTargetUp(target);
+            Vec3 currentUpNow = getUpVector();
+            if (QuaternionUtil.angleBetween(currentUpNow, riddenUp) < 1.0E-4) {
+                out.set(visualRotation);
+                return;
+            }
+            // Pivot an exact flip about the way the vehicle is POINTING, so a
+            // 180 degree field rolls it rather than cartwheeling it through the
+            // cardinal frames' differing yaw conventions.
+            Vec3 headingWorld = RotationUtil.vecPlayerToWorld(
+                RotationUtil.rotToVec(entity.getYRot(), 0), visualRotation
+            );
+            // NOTE: the oblique-ship RELEASE defect is diagnosed and NOT fixed here.
+            //
+            // Frames are world-to-local, so F_new = F_old * conj(delta) means the
+            // world heading transforms as h_new = delta (x) h_old -- re-levelling
+            // the up and TURNING the vehicle are the same rotation. When a field
+            // ends, delta becomes the whole arc from the face normal to world up,
+            // and on an obliquely rotated ship that is close to 180 degrees: the
+            // vehicle is turned to face back at the ship it just left, velocity
+            // following. That is a real, independently verified defect.
+            //
+            // The obvious repair -- pivot about the direction of travel, which
+            // leaves the heading fixed -- was tried and reverted. Every gate
+            // tried for "the field has ended" was also true of a vehicle flying
+            // INTO a field, where the shortest arc is correct, and applying the
+            // pivot there stepped the frame 75 degrees in one tick
+            // (drivingIntoAFieldIsSmooth catches it immediately). Entering and
+            // leaving are not distinguishable from the state this method can
+            // see, which is the actual problem to solve first.
+            //
+            // Left as the shortest arc, which is right for following a surface
+            // and wrong only on release.
+            Quaternionf riddenDelta =
+                QuaternionUtil.getRotationBetween(currentUpNow, riddenUp, headingWorld);
+            out.set(visualRotation).mul(riddenDelta.conjugate()).normalize();
+
+            // ...AND NOW PUT THE HEADING BACK, ON RELEASE ONLY.
+            //
+            // The note above is still the correct diagnosis; what it was
+            // missing is a way to tell a release from an entry, and this file
+            // already has one. clearBlocksOnFieldExit reads "the frame is being
+            // sent home" off the chase TARGET rather than off the field state,
+            // precisely because a non-player entity computes no gravity on the
+            // client and a field-state trigger would fire on one side only.
+            // The same test works here: re-levelling to world up is a release,
+            // and entry to any field that is not straight down is not.
+            //
+            // The repair that was tried and reverted -- pivoting about the
+            // direction of travel -- replaced the arc, so it also broke entry,
+            // where the shortest arc is right. This does not touch the arc. The
+            // shortest arc already puts the UP exactly where it belongs; all
+            // that is wrong is the heading it drags along with it. So keep the
+            // arc and add a pure twist about the NEW up, which by construction
+            // cannot disturb that up: a local-Y premultiply leaves
+            // conj(F) . yHat unchanged.
+            //
+            // Derivation, so nobody has to redo it. Frames are world-to-local,
+            // so out' = Ry(t) . out gives h_new = R(riddenUp, -t) . b, where b
+            // is the heading the arc produced. Setting that equal to the
+            // heading we started with gives t = atan2(riddenUp . (a x b), a . b)
+            // with both vectors flattened into the plane perpendicular to
+            // riddenUp.
+            if (riddenUp.y > 0.999) {
+                Vec3 headingAfter = RotationUtil.vecPlayerToWorld(
+                    RotationUtil.rotToVec(entity.getYRot(), 0), out
+                );
+                Vec3 a = headingWorld.subtract(riddenUp.scale(headingWorld.dot(riddenUp)));
+                Vec3 b = headingAfter.subtract(riddenUp.scale(headingAfter.dot(riddenUp)));
+                // The degeneracy guard is load-bearing, not defensive. Driving
+                // head-on INTO a surface puts the heading along the new up, a
+                // collapses, and there is no heading in the plane to preserve
+                // -- which is exactly the case where swinging the nose round
+                // is the right answer.
+                if (a.lengthSqr() > 1.0E-6 && b.lengthSqr() > 1.0E-6) {
+                    a = a.normalize();
+                    b = b.normalize();
+                    double twist = Math.atan2(riddenUp.dot(a.cross(b)), a.dot(b));
+                    if (Math.abs(twist) > 1.0E-6) {
+                        out.premul(new Quaternionf().rotationY((float) twist)).normalize();
+                    }
+                }
+            }
+            return;
+        }
+
         if (!(entity instanceof LivingEntity)) {
-            if (QuaternionUtil.angleBetween(target, cardinal) < 1.0E-3) {
+            // Non-living bodies get the planet-walk rule too, and for the same
+            // reason the living path below gives: a radial field is never
+            // perpendicular to the flat faces of a blocky planet, so a frame
+            // built from the raw field leaves anything resting on a face
+            // permanently tilted.
+            //
+            // For a VEHICLE that tilt is not merely cosmetic. A vehicle applies
+            // its own gravity along its own local down -- Automobility's vSpeed,
+            // a boat's, a minecart's -- and a tilted frame aims part of that
+            // acceleration ALONG the face, which drags a parked vehicle toward
+            // the nearest point of the face to the core. It also swings several
+            // degrees per step as the body moves, which is the stutter.
+            //
+            // Inert wherever no surface is held: effectiveTargetUp returns the
+            // raw field's up unchanged when lastGroundNormal is absent or points
+            // away, so airborne bodies, orbits, plating (whose target already IS
+            // the cardinal) and the plain world are bit-for-bit as before.
+            Vec3 nonLivingUp = effectiveTargetUp(target);
+            Vec3 nonLivingTarget = nonLivingUp.scale(-1);
+            if (QuaternionUtil.angleBetween(nonLivingTarget, cardinal) < 1.0E-3) {
                 out.set(canonical);
             }
             else {
                 // F = canonical ∘ R, where R rotates the target vector onto the cardinal
-                out.set(canonical).mul(QuaternionUtil.getRotationBetween(target, cardinal)).normalize();
+                out.set(canonical)
+                    .mul(QuaternionUtil.getRotationBetween(nonLivingTarget, cardinal))
+                    .normalize();
             }
             return;
         }
@@ -2646,7 +3132,22 @@ public class GravityCapabilityImpl implements IGravityCapability {
             // player meters past the field ("walked off the plating and was
             // still pulled upward until well away"). Sustain briefly, then
             // treat as no field.
-            if (!surfaceWalking || ++secondaryOnlySustainTicks > 12) {
+            // NO EDGE TO ROUND. The pocket the sustain exists for lies
+            // between TWO plated faces, and it is the neighbouring face's
+            // bleed — pointing about ninety degrees away — whose blend
+            // carries the body across. Off the END of a flat plated run
+            // there is no second face: the only bleed still reaching is the
+            // one we just left, pointing exactly where it always did, and
+            // sustaining it only drags the pull a metre past the plating
+            // ("walking off the plating doesn't drop me"). Compared against
+            // the field that WAS holding us rather than the held face's
+            // normal, so a plate blended with the dimension's own gravity
+            // (whose direction is not the face normal) is judged on the
+            // same footing. A face change already in flight is an edge by
+            // definition and keeps the hold.
+            boolean edgeToRound = recentReleasedTicks > 0 || surfaceChangeCooldown > 0
+                || lastFieldVector == null || bleedsDivergeFrom(lastFieldVector);
+            if (!surfaceWalking || !edgeToRound || ++secondaryOnlySustainTicks > 12) {
                 tempEffects.clear();
             }
         }
@@ -2658,12 +3159,17 @@ public class GravityCapabilityImpl implements IGravityCapability {
         resolveGravityTarget();
 
         if (hadFieldEffects) {
+            ticksSinceFieldEffect = 0;
             fieldGraceTicks = FIELD_GRACE_TICKS;
             lastFieldVector = targetGravityVector;
         }
         else if (fieldGraceTicks > 0 && lastFieldVector != null) {
+            if (ticksSinceFieldEffect < Integer.MAX_VALUE) {
+                ticksSinceFieldEffect++;
+            }
             if (lastGroundNormal != null && (capsuleGrounded || entity.onGround())
-                && stillInsideLastFieldRegion()) {
+                && stillInsideLastFieldRegion()
+                && ticksSinceFieldEffect <= SUSTAIN_WITHOUT_EFFECT_TICKS) {
                 // STANDING ON A HELD SURFACE SUSTAINS ITS FIELD. Field-effect
                 // delivery flickers out for SECONDS on fast-rotating ships
                 // (measured: server fx=0 while the client stayed fed — the
@@ -2697,6 +3203,42 @@ public class GravityCapabilityImpl implements IGravityCapability {
 
         currGravityStrength = targetGravityStrength;
     }
+
+    /**
+     * Does any pending bleed point somewhere other than the field that was
+     * holding this entity? That is what tells a cube EDGE — where the
+     * neighbouring face's plates bleed into the pocket pointing far off the
+     * old down, and their blend is the only thing carrying the body around
+     * — from the end of a flat plated run, where the face just left is the
+     * only thing still bleeding and points exactly where it always did.
+     */
+    private boolean bleedsDivergeFrom(Vec3 held) {
+        if (held.lengthSqr() < 1.0E-6) {
+            return true;
+        }
+        Vec3 h = held.normalize();
+        for (GravityDirEffect effect : tempEffects) {
+            if (effect.direction.lengthSqr() < 1.0E-6) {
+                continue;
+            }
+            if (effect.direction.normalize().dot(h) < 0.99) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Ticks since a field source last actually delivered an effect. The
+    // held-surface sustain below BRIDGES delivery dropouts (seconds of them
+    // on a fast-rotating ship); it must not OUTLIVE the field. Nothing told
+    // the two apart, and the remembered region survives the grace by
+    // design, so an entity resting on a surface still inside a plate's
+    // remembered column kept refreshing its own grace — probe, sustain,
+    // gravity active, probe — indefinitely after the plate was broken or
+    // switched off. Measured in the game test: a boat whose plating was
+    // removed under it never came upright again.
+    private int ticksSinceFieldEffect = Integer.MAX_VALUE;
+    private static final int SUSTAIN_WITHOUT_EFFECT_TICKS = 60;
 
     private @Nullable Vec3 lastFieldVector = null;
     // consecutive ticks the field consisted of secondary bleeds only
@@ -2993,14 +3535,22 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
         Vec3 target = targetGravityVector.normalize();
 
-        // Players snap to the EFFECTIVE gravity (surface normal while standing
-        // on a face). The raw radial field crosses 45-degree boundaries while
-        // walking a planet face, flapping the cardinal — and with it the
-        // canonical twist reference and the server sync — several times a
-        // second, even though the player's actual up never moved.
-        if (entity instanceof Player) {
-            target = effectiveTargetUp(target).scale(-1);
-        }
+        // Everything snaps to the EFFECTIVE gravity (surface normal while
+        // standing on a face), not just players. The raw radial field crosses
+        // 45-degree boundaries while walking or driving a planet face, flapping
+        // the cardinal — and with it the canonical twist reference and the
+        // server sync — several times a second, even though the body's actual
+        // up never moved.
+        //
+        // Widened from Player because computeVisualTarget now builds a
+        // non-living frame from this same vector: with the two disagreeing, the
+        // frame would sit steady on a face while the cardinal flapped beneath
+        // it, re-twisting canonical and handing every downstream consumer a
+        // spurious rotation partway across a face.
+        //
+        // Still a no-op whenever no surface is held, since that is exactly when
+        // effectiveTargetUp returns its argument unchanged.
+        target = effectiveTargetUp(target).scale(-1);
 
         Direction candidate = Direction.getNearest(target.x, target.y, target.z);
         if (candidate == currGravityDirection) {
@@ -3052,8 +3602,122 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 // while the position adjustments read as jolts/teleports.
                 // The legacy path remains only for identity-frame entities
                 // (an instant cardinal flip before any frame motion).
+                Direction from = prevGravityDirection;
                 prevGravityDirection = currGravityDirection;
                 updateBoundingBox();
+
+                // A VEHICLE'S HEADING MUST SURVIVE THE CROSSING. "The cardinal
+                // is only a reference" holds for a PLAYER, who moves and aims
+                // in the continuous visual frame — but every other entity
+                // moves in the CARDINAL one (see
+                // GravityChangerAPI.getMovementRotation), and that frame jumps
+                // here. Its stored yaw and local deltaMovement are in the OLD
+                // cardinal's reference, so the same numbers name a different
+                // world direction under the new one: measured on a gravity
+                // core cube, a boat driving north over the top face's edge
+                // (yaw 180, heading world -Z) came out on the north face with
+                // yaw 180 now meaning straight UP. It turned round, drove back
+                // onto the top face, turned round again, and holding forward
+                // just bounced between the two faces. Walking already
+                // got this for free through the continuous frame, which is
+                // why only vehicles showed it.
+                //
+                // PARALLEL TRANSPORT, not a re-projection of the world look.
+                // Rounding an edge turns the frame by the rotation carrying
+                // the old down onto the new one, and the body turns rigidly
+                // with it — its yaw and local velocity NUMBERS do not change,
+                // only the frame they are read in. What is left over is the
+                // pure TWIST between that transported frame and the new
+                // cardinal's canonical one, and that is the part to
+                // re-parametrize: a difference about a SHARED down, where the
+                // yaw projection is exact. Re-projecting the world look
+                // straight into the new frame is degenerate here — across a
+                // ninety-degree change the old heading can lie along the new
+                // down, which names no yaw at all (measured: it aimed the
+                // boat into the face it had just left).
+                // Projectiles keep their own convention: their deltaMovement
+                // is WORLD-space and their yaw is cosmetic.
+                if (!(entity instanceof Player)
+                    && !(entity instanceof net.minecraft.world.entity.projectile.Projectile)
+                    && from != currGravityDirection) {
+
+                    Quaternionf transported =
+                        new Quaternionf(RotationUtil.getWorldRotationQuaternion(from))
+                            .mul(RotationUtil.getRotationBetween(from, currGravityDirection).conjugate())
+                            .normalize();
+
+                    if (isRiddenVehicle()) {
+                        // PARALLEL TRANSPORT IS HOLONOMIC, AND THE DEBT COMES DUE HERE.
+                        //
+                        // A ridden vehicle transports its frame (see
+                        // computeVisualTarget), which introduces no twist on any
+                        // single step -- but going round a corner accumulates
+                        // one anyway. After a face change the transported frame
+                        // differs from canonical(new) by a pure twist about the
+                        // new up. Worked out from the tables in RotationUtil for
+                        // all 24 adjacent face pairs of a cube: every side-to-
+                        // side pair is 0, north-to-bottom is 0, bottom-to-north
+                        // is 0, top-to-north is 180 and bottom-to-east/west is
+                        // 90 -- which is exactly the set of transitions reported
+                        // as turning the vehicle the wrong way, including the
+                        // ones reported as FINE.
+                        //
+                        // normalizeTwist already removes that residue, as a
+                        // re-parametrization: it twists the frame and shifts yaw
+                        // by the same amount, so the world heading never moves
+                        // and nobody sees it. The catch is that it runs on ONE
+                        // SIDE. It returns early under shouldAcceptServerSync,
+                        // so a client never runs it for a vehicle, and the sync
+                        // packet carries the frame (visualTarget) but no yaw --
+                        // so the client received the unwound frame and had
+                        // nothing to pay the yaw half with. The frame twisted
+                        // under the rider and the vehicle visibly turned.
+                        //
+                        // So do it HERE instead, at the cardinal crossing: an
+                        // event both sides see, because the cardinal is in the
+                        // sync packet. Both halves move in the same tick, which
+                        // is what keeps it invisible -- and is the difference
+                        // from the version removed in A8, which moved only the
+                        // yaw and left the frame to ease across over the chase
+                        // ("yaws one way then rotates back out of it").
+                        //
+                        // The twist is about the entity's own up, so
+                        // premultiplying it COMMUTES with the transport that
+                        // follows: (T^-1 * F_old) * d^-1 == T^-1 * F_new. The
+                        // chase therefore lands exactly on canonical(new),
+                        // normalizeTwist finds nothing left to do, and the
+                        // one-sided unwind never fires again.
+                        Quaternionf diff = new Quaternionf(transported).mul(
+                            new Quaternionf(
+                                RotationUtil.getWorldRotationQuaternion(currGravityDirection))
+                                .conjugate());
+                        if (diff.w() < 0) {
+                            // q and -q are the same rotation; pick the short way
+                            // round or atan2 below reads the twist as its
+                            // reflex angle.
+                            diff.set(-diff.x(), -diff.y(), -diff.z(), -diff.w());
+                        }
+                        float twist = 2.0f * (float) Math.atan2(diff.y(), diff.w());
+                        if (Math.abs(twist) > 1.0E-6f) {
+                            Quaternionf delta = new Quaternionf().rotationY(-twist);
+                            Quaternionf old = new Quaternionf(visualRotation);
+                            visualRotation.premul(delta).normalize();
+                            prevVisualRotation.premul(delta).normalize();
+                            visualTarget.premul(delta).normalize();
+                            lastChaseTarget.premul(delta).normalize();
+                            // Exact: a pure local-Y twist plus its yaw
+                            // compensation cancel identically, at every partial
+                            // tick.
+                            compensateFrameChange(old, visualRotation);
+
+                        }
+                    }
+                    else {
+                        compensateFrameChange(
+                            transported,
+                            RotationUtil.getWorldRotationQuaternion(currGravityDirection));
+                    }
+                }
             }
             else {
                 applyGravityDirectionChange(
@@ -3124,7 +3788,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
             Vec3.atLowerCornerOf(currGravityDirection.getNormal()),
             baseGravityStrength, currGravityStrength,
             new Quaternionf(visualTarget),
-            targetGravityVector
+            targetGravityVector,
+            frameYawReparamTotal
         );
     }
 
@@ -3845,6 +4510,33 @@ public class GravityCapabilityImpl implements IGravityCapability {
     public boolean isSurfaceTransitioning() {
         return surfaceChangeCooldown > 0
             || angleBetween(visualRotation, visualTarget) > (float) Math.toRadians(3);
+    }
+
+    /**
+     * A non-living body that is CARRYING SOMEONE.
+     *
+     * <p>The three non-living shortcuts below -- a cardinal-anchored target, an
+     * instant frame step, and a yaw compensation at the cardinal crossing -- all
+     * rest on "it has no camera". A ridden vehicle does. Its passenger adopts
+     * its frame verbatim (see the passenger block in
+     * {@link #advanceVisualRotation()}), so whatever the vehicle's frame does,
+     * the rider's view does too, on the same tick.
+     *
+     * <p>So a ridden vehicle takes the LIVING path: parallel transport, rate
+     * limited, no compensation. Everything else -- items, orbs, TNT, an empty
+     * boat drifting through a field -- keeps the instant snap, which is what
+     * keeps their client and server frames equal given equal positions.
+     *
+     * <p>Dismounting mid-transition flips this predicate and hands the body back
+     * to the cardinal-anchored construction. {@link #normalizeTwist()} unwinds
+     * the difference invisibly once the chase settles, and nobody is looking
+     * through the frame by then anyway.
+     */
+    private boolean isRiddenVehicle() {
+        return entity != null
+            && !(entity instanceof LivingEntity)
+            && !(entity instanceof net.minecraft.world.entity.projectile.Projectile)
+            && !entity.getPassengers().isEmpty();
     }
 
     /** World-space up direction of the entity's visual frame (unit vector). */

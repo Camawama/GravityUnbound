@@ -334,11 +334,76 @@ public abstract class BoatMixin extends Entity {
         callback.accept(passenger, this.getX() + offset.x, this.getY() + offset.y, this.getZ() + offset.z);
         passenger.setYRot(passenger.getYRot() + this.deltaRotation);
         passenger.setYHeadRot(passenger.getYHeadRot() + this.deltaRotation);
-        this.clampRotation(passenger);
+        gravityunbound$frameClampRotation(passenger, comp);
         if (passenger instanceof Animal animal && this.getPassengers().size() == this.getMaxPassengers()) {
             int j = passenger.getId() % 2 == 0 ? 90 : 270;
             passenger.setYBodyRot(animal.yBodyRot + (float) j);
             passenger.setYHeadRot(passenger.getYHeadRot() + (float) j);
         }
+    }
+
+    /**
+     * FRAME-AWARE {@code Boat.clampRotation}. Vanilla holds the rider within
+     * 105 degrees of the boat by comparing their yaws as raw numbers — but
+     * under rotated gravity those two numbers are kept in DIFFERENT frames:
+     * the rider aims in the continuous visual frame, the boat moves in the
+     * cardinal one ({@code GravityChangerAPI.getMovementRotation}). The two
+     * agree only while both are settled on the same cardinal.
+     *
+     * At a crossing they are not. The boat's number is re-parametrized in a
+     * single step the tick its cardinal flips; the rider's is re-parametrized
+     * when its own chase settles, which is later — and on a client, where the
+     * boat's cardinal arrives by sync while the rider computes its own, later
+     * again. Vanilla read that gap as the rider having spun most of the way
+     * round, clamped it, and left the view permanently off the bow: "I'll
+     * randomly be looking to the left or right and no longer straight forward
+     * centered with the boat", the side depending on which way the numbers
+     * happened to jump. A transient skew became a permanent turn.
+     *
+     * Same clamp, same limit — but the boat's heading is first expressed in
+     * the RIDER's frame, so the difference being clamped is the real angle
+     * between them and not an artefact of two conventions.
+     */
+    @Unique
+    private void gravityunbound$frameClampRotation(Entity passenger, GravityCapabilityImpl comp) {
+        org.joml.Quaternionf riderFrame = GravityChangerAPI.getAimRotation(passenger);
+        Vec3 riderUp = RotationUtil.vecPlayerToWorld(new Vec3(0.0, 1.0, 0.0), riderFrame);
+        Vec3 boatUp = comp.getUpVector();
+
+        // NO CLAMPING WHILE THE TWO FRAMES ARE APART. This is the crossing
+        // itself: the boat's cardinal flips in one step, the rider's frame
+        // turns over several ticks, and on a client the boat's cardinal
+        // arrives by sync while the rider computes its own. In that window
+        // there IS no shared horizontal plane to measure a yaw difference
+        // in — the boat's forward can come out near-vertical in the rider's
+        // frame, where a yaw is not merely wrong but undefined. Clamping
+        // against that is what turned the view off the bow and left it
+        // there. The clamp is a comfort rail, not physics: drop it for the
+        // few ticks its reference is meaningless and the rider simply keeps
+        // looking where they were looking, which is the whole ask.
+        if (riderUp.dot(boatUp) < 0.99) {
+            return;
+        }
+
+        Vec3 heading = RotationUtil.vecPlayerToWorld(
+            RotationUtil.rotToVec(this.getYRot(), 0), GravityChangerAPI.getMovementRotation(this));
+        // flatten into the rider's own horizontal plane before reading a yaw
+        // off it, so a boat nosed up or down cannot make one up either
+        Vec3 flat = heading.subtract(riderUp.scale(heading.dot(riderUp)));
+        if (flat.lengthSqr() < 1.0E-4) {
+            return;
+        }
+        float boatYawHere = (float) RotationUtil.vecToRot(
+            RotationUtil.vecWorldToPlayer(flat.normalize(), riderFrame)).x;
+
+        passenger.setYBodyRot(boatYawHere);
+        float f = Mth.wrapDegrees(passenger.getYRot() - boatYawHere);
+        float f1 = Mth.clamp(f, -105.0F, 105.0F);
+        if (f1 == f) {
+            return;
+        }
+        passenger.yRotO += f1 - f;
+        passenger.setYRot(passenger.getYRot() + f1 - f);
+        passenger.setYHeadRot(passenger.getYRot());
     }
 }

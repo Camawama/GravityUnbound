@@ -310,6 +310,14 @@ public class GravityGameTests {
                 helper.setBlock(new BlockPos(9, y, z), plating);
             }
         }
+        // a floor, so the released boat lands instead of falling out of the
+        // structure. An embedded one lands too - the x assertion below is
+        // what tells them apart.
+        for (int x = 2; x <= 12; x++) {
+            for (int z = 4; z <= 15; z++) {
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.STONE.defaultBlockState());
+            }
+        }
 
         Vec3 origin = Vec3.atLowerCornerOf(helper.absolutePos(BlockPos.ZERO));
         Vec3 rest = new Vec3(9.9, 12.0, 9.5);
@@ -362,8 +370,235 @@ public class GravityGameTests {
                     + " box=" + boat.getBoundingBox());
                 return;
             }
+            // the teeth: unstepped, the boat comes out of the transition at
+            // x = 10.0, a third of its width inside the stone column
+            if (rel.x > 9.4) {
+                helper.fail("boat is in the wall column: rel=" + fmt(rel));
+                return;
+            }
             helper.succeed();
         });
+    }
+
+    /**
+     * A VEHICLE'S HEADING ACROSS A CARDINAL. Non-player entities move in the
+     * CARDINAL frame ({@code GravityChangerAPI.getMovementRotation}), not the
+     * continuous visual one players use, so when their cardinal flips the
+     * same stored yaw suddenly names a different world direction. Driving a
+     * boat over a gravity-core cube's edge must not turn it round: the world
+     * heading it had on the old face is the heading it keeps on the new one.
+     *
+     * Needs no movement (Valkyrien Skies cancels every move() in the
+     * game-test world): the cardinal is driven straight through the base
+     * gravity API and the world heading compared either side of it.
+     */
+    @GameTest(template = EMPTY, timeoutTicks = 200)
+    public static void vehicleKeepsHeadingAcrossACardinal(GameTestHelper helper) {
+        Boat boat = helper.spawn(EntityType.BOAT, new Vec3(9.5, 4.0, 9.5));
+        boat.setYRot(180.0F);
+        boat.setDeltaMovement(0.0, 0.0, -0.3);
+
+        Vec3[] before = new Vec3[2];
+        helper.runAfterDelay(20, () -> {
+            before[0] = worldHeading(boat);
+            before[1] = GravityChangerAPI.getWorldVelocity(boat);
+            LOGGER.info("[GravityUnbound/test] heading before: dir={} yaw={} world={} vel={}",
+                GravityChangerAPI.getGravityDirection(boat), boat.getYRot(),
+                fmt(before[0]), fmt(before[1]));
+            // Top face -> north face of a CORE cube. The core is at the
+            // centre, so on the north face down points back at it: SOUTH.
+            GravityChangerAPI.setBaseGravityDirection(boat, Direction.SOUTH);
+        });
+
+        helper.runAfterDelay(60, () -> {
+            Vec3 after = worldHeading(boat);
+            Vec3 afterVel = GravityChangerAPI.getWorldVelocity(boat);
+            LOGGER.info("[GravityUnbound/test] heading after: dir={} yaw={} world={} vel={}",
+                GravityChangerAPI.getGravityDirection(boat), boat.getYRot(),
+                fmt(after), fmt(afterVel));
+            if (GravityChangerAPI.getGravityDirection(boat) != Direction.SOUTH) {
+                helper.fail("the boat never adopted the new cardinal");
+                return;
+            }
+            // PARALLEL TRANSPORT is the invariant, not an unchanged world
+            // heading: rounding the edge rotates the frame by whatever
+            // carries the old down onto the new one, and driving north over
+            // the top edge means driving DOWN the north face afterwards. The
+            // heading must be the old one under that same rotation - keep
+            // holding forward and you keep going the same way round the cube.
+            Vec3 expected = transport(Direction.DOWN, Direction.SOUTH, before[0]);
+            if (after.dot(expected) < 0.99) {
+                helper.fail("boat heading did not carry across the cardinal: was " + fmt(before[0])
+                    + ", expected " + fmt(expected) + ", got " + fmt(after));
+                return;
+            }
+            // No assertion on the velocity: compensateFrameChange carries it
+            // through the same two frames in the same call, so the heading
+            // check already covers them - and by the time we look, gravity
+            // has been accelerating the boat along the NEW down for two
+            // seconds, so a comparison here would measure that, not the
+            // transport.
+            helper.succeed();
+        });
+    }
+
+    /**
+     * A RIDER KEEPS ITS SEAT'S HEADING. Looking straight ahead over a boat's
+     * bow, then driving over a cube edge onto the next face, must leave the
+     * view still straight ahead over the bow. The two are kept in DIFFERENT
+     * frames - the rider aims in the continuous visual frame, the vehicle
+     * moves in the cardinal one - so the only meaningful comparison is the
+     * angle between their WORLD headings, about the frame's up.
+     */
+    @GameTest(template = EMPTY, timeoutTicks = 200)
+    public static void riderKeepsHeadingWithItsVehicle(GameTestHelper helper) {
+        for (int x = 4; x <= 15; x++) {
+            for (int z = 4; z <= 15; z++) {
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        Boat boat = helper.spawn(EntityType.BOAT, new Vec3(9.5, 4.0, 9.5));
+        boat.setYRot(180.0F);
+        net.minecraft.world.entity.player.Player rider = helper.makeMockPlayer();
+        rider.moveTo(boat.getX(), boat.getY(), boat.getZ(), 180.0F, 0.0F);
+        rider.startRiding(boat, true);
+
+        double[] before = new double[1];
+        helper.runAfterDelay(20, () -> {
+            before[0] = relativeHeadingDeg(rider, boat);
+            LOGGER.info("[GravityUnbound/test] rider before: rel={} riding={} boatYaw={} riderYaw={} dir={}",
+                String.format(java.util.Locale.ROOT, "%.2f", before[0]), rider.isPassenger(),
+                boat.getYRot(), rider.getYRot(), GravityChangerAPI.getGravityDirection(boat));
+        });
+
+        // GRADUALLY, the way rounding a real cube edge does it: the field
+        // sweeps from DOWN to SOUTH over two seconds, so the cardinal snaps
+        // partway through while the frames are still turning. Flipping it in
+        // one step hides the bug - everything then re-parametrizes in the
+        // same tick, before the rider is ever positioned.
+        for (int t = 21; t <= 30; t++) {
+            final double a = Math.PI * 0.5 * ((t - 20) / 10.0);
+            helper.runAfterDelay(t, () -> GravityChangerAPI.setBaseGravityDirection(
+                boat, new Vec3(0.0, -Math.cos(a), Math.sin(a))));
+        }
+
+        for (int t = 30; t <= 100; t += 10) {
+            final int tick = t;
+            helper.runAfterDelay(t, () -> LOGGER.info(
+                "[GravityUnbound/test] rider t={} rel={} boatYaw={} riderYaw={} boatDir={} riderDir={}",
+                tick, String.format(java.util.Locale.ROOT, "%.2f", relativeHeadingDeg(rider, boat)),
+                boat.getYRot(), rider.getYRot(),
+                GravityChangerAPI.getGravityDirection(boat), GravityChangerAPI.getGravityDirection(rider)));
+        }
+
+        helper.runAfterDelay(120, () -> {
+            double after = relativeHeadingDeg(rider, boat);
+            LOGGER.info("[GravityUnbound/test] rider after: rel={}",
+                String.format(java.util.Locale.ROOT, "%.2f", after));
+            if (!rider.isPassenger()) {
+                helper.fail("the rider stopped riding");
+                return;
+            }
+            double drift = Math.abs(net.minecraft.util.Mth.wrapDegrees((float) (after - before[0])));
+            if (drift > 5.0) {
+                helper.fail("rider's heading drifted off the vehicle across the cardinal: was "
+                    + String.format(java.util.Locale.ROOT, "%.2f", before[0]) + " deg, now "
+                    + String.format(java.util.Locale.ROOT, "%.2f", after) + " deg");
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    /**
+     * A RIDER SITS ON ITS MOUNT'S FRAME. Vanilla seats a passenger by adding
+     * the riding offset on the WORLD Y axis, so under rotated gravity the
+     * rider floats off to the side of its mount instead of onto its back -
+     * the player model sitting well clear of a horse standing in a field.
+     * Boats and minecarts already override this with frame-aware versions;
+     * everything else (horses, pigs, striders, modded mounts) used the
+     * default. The seat offset must lie along the MOUNT's own up.
+     */
+    @GameTest(template = EMPTY, timeoutTicks = 200)
+    public static void riderSitsOnItsMountsFrame(GameTestHelper helper) {
+        for (int x = 4; x <= 15; x++) {
+            for (int z = 4; z <= 15; z++) {
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        net.minecraft.world.entity.animal.horse.Horse horse =
+            helper.spawn(EntityType.HORSE, new Vec3(9.5, 3.0, 9.5));
+        horse.setTamed(true);
+        net.minecraft.world.entity.player.Player rider = helper.makeMockPlayer();
+        rider.startRiding(horse, true);
+        GravityChangerAPI.setBaseGravityDirection(horse, Direction.EAST);
+
+        helper.runAfterDelay(60, () -> {
+            Vec3 up = GravityChangerAPI.getUpVector(horse);
+            Vec3 delta = rider.position().subtract(horse.position());
+            double along = delta.dot(up);
+            double sideways = delta.subtract(up.scale(along)).length();
+            LOGGER.info("[GravityUnbound/test] mount: dir={} base={} up={} delta={} along={} sideways={}",
+                GravityChangerAPI.getGravityDirection(horse),
+                GravityChangerAPI.getBaseGravityDirection(horse),
+                fmt(up), fmt(delta),
+                String.format(java.util.Locale.ROOT, "%.3f", along),
+                String.format(java.util.Locale.ROOT, "%.3f", sideways));
+            if (!rider.isPassenger()) {
+                helper.fail("the rider stopped riding");
+                return;
+            }
+            if (Math.abs(up.y) > 0.1) {
+                helper.fail("the horse's frame never turned off world up: up=" + fmt(up));
+                return;
+            }
+            // vanilla puts the seat on world +Y, which is entirely SIDEWAYS
+            // once the mount's up is west
+            if (sideways > 0.1) {
+                helper.fail("rider is seated off the side of its mount: delta=" + fmt(delta)
+                    + " up=" + fmt(up) + " sideways=" + String.format(java.util.Locale.ROOT,
+                    "%.3f", sideways));
+                return;
+            }
+            if (along < 0.1) {
+                helper.fail("rider is not seated along its mount's up: delta=" + fmt(delta)
+                    + " up=" + fmt(up));
+                return;
+            }
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Signed angle, about the vehicle's up, from the vehicle's world heading
+     * to the rider's world look. Both are read in the frame each actually
+     * uses, so this is comparable across a frame change even though their
+     * raw yaw numbers are not.
+     */
+    private static double relativeHeadingDeg(net.minecraft.world.entity.Entity rider,
+                                             net.minecraft.world.entity.Entity vehicle) {
+        Vec3 look = net.camacraft.gravityunbound.util.RotationUtil.vecPlayerToWorld(
+            net.camacraft.gravityunbound.util.RotationUtil.rotToVec(rider.getYRot(), 0),
+            GravityChangerAPI.getAimRotation(rider));
+        Vec3 heading = net.camacraft.gravityunbound.util.RotationUtil.vecPlayerToWorld(
+            net.camacraft.gravityunbound.util.RotationUtil.rotToVec(vehicle.getYRot(), 0),
+            GravityChangerAPI.getMovementRotation(vehicle));
+        Vec3 up = GravityChangerAPI.getUpVector(vehicle);
+        return Math.toDegrees(Math.atan2(heading.cross(look).dot(up), heading.dot(look)));
+    }
+
+    /** {@code v} carried across an edge: rotated as the down was. */
+    private static Vec3 transport(Direction from, Direction to, Vec3 v) {
+        org.joml.Vector3f out = v.toVector3f();
+        out.rotate(net.camacraft.gravityunbound.util.RotationUtil.getRotationBetween(from, to));
+        return new Vec3(out);
+    }
+
+    /** The entity's flat world-space heading, in the frame it MOVES in. */
+    private static Vec3 worldHeading(net.minecraft.world.entity.Entity entity) {
+        return net.camacraft.gravityunbound.util.RotationUtil.vecPlayerToWorld(
+            net.camacraft.gravityunbound.util.RotationUtil.rotToVec(entity.getYRot(), 0),
+            GravityChangerAPI.getMovementRotation(entity));
     }
 
     /**

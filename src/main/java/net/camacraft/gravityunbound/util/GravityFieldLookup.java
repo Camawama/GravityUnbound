@@ -174,20 +174,94 @@ public final class GravityFieldLookup {
         int maxX = net.minecraft.util.Mth.floor(volume.maxX);
         int maxY = Math.min(level.getMaxBuildHeight() - 1, net.minecraft.util.Mth.floor(volume.maxY));
         int maxZ = net.minecraft.util.Mth.floor(volume.maxZ);
+        if (maxX < minX || maxY < minY || maxZ < minZ) {
+            return;
+        }
+
+        // WALKED BY CHUNK SECTION, NOT BY BLOCK, AND THE PALETTE IS ASKED FIRST.
+        //
+        // This was a plain triple loop over every block calling
+        // level.getFluidState, and a profile of a real session put it at 36% of
+        // ALL server tick work -- the single largest cost in the game, ahead of
+        // ticking every entity in the world by a factor of four. Two reasons,
+        // both structural rather than a matter of tuning:
+        //
+        //   - level.getFluidState re-resolves the chunk for EVERY block, so
+        //     Level.getChunk was the hottest leaf in the entire profile. Here
+        //     the chunk is fetched once per 16x16 column and the section once
+        //     per 16 blocks of height.
+        //   - a field volume is mostly air or mostly stone, and the old loop
+        //     paid full price for every one of those blocks. maybeHas asks the
+        //     SECTION'S PALETTE whether it contains any fluid at all, which
+        //     skips 4096 blocks at a time for the price of one scan of a list
+        //     that is usually one entry long.
+        //
+        // Same blocks woken, same order within a column, same skip for unloaded
+        // chunks -- it never force-loads.
+        java.util.function.Predicate<net.minecraft.world.level.block.state.BlockState> HAS_FLUID =
+            state -> !state.getFluidState().isEmpty();
 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                cursor.set(x, minY, z);
-                if (!level.hasChunkAt(cursor)) {
+
+        int minChunkX = minX >> 4;
+        int maxChunkX = maxX >> 4;
+        int minChunkZ = minZ >> 4;
+        int maxChunkZ = maxZ >> 4;
+
+        for (int cx = minChunkX; cx <= maxChunkX; cx++) {
+            for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
+                if (!level.hasChunk(cx, cz)) {
                     continue;
                 }
-                for (int y = minY; y <= maxY; y++) {
-                    cursor.set(x, y, z);
-                    net.minecraft.world.level.material.FluidState fluid = level.getFluidState(cursor);
-                    if (!fluid.isEmpty()) {
-                        level.scheduleTick(cursor.immutable(), fluid.getType(), fluid.getType().getTickDelay(level));
+                net.minecraft.world.level.chunk.ChunkAccess chunk =
+                    level.getChunk(cx, cz, net.minecraft.world.level.chunk.ChunkStatus.FULL, false);
+                if (chunk == null) {
+                    continue;
+                }
+
+                int x0 = Math.max(minX, cx << 4);
+                int x1 = Math.min(maxX, (cx << 4) + 15);
+                int z0 = Math.max(minZ, cz << 4);
+                int z1 = Math.min(maxZ, (cz << 4) + 15);
+
+                for (int y = minY; y <= maxY; ) {
+                    int sectionIndex = chunk.getSectionIndex(y);
+
+                    // The last block of this section, or of the volume. Never
+                    // below y: the loop advances past sectionTop, so a section
+                    // index that did not correspond to y would not merely give
+                    // a wrong answer, it would spin forever.
+                    int sectionTop = (sectionIndex < 0 || sectionIndex >= chunk.getSections().length)
+                        ? y
+                        : Math.max(y, Math.min(maxY,
+                            chunk.getSectionYFromSectionIndex(sectionIndex) * 16 + 15));
+
+                    net.minecraft.world.level.chunk.LevelChunkSection section =
+                        (sectionIndex < 0 || sectionIndex >= chunk.getSections().length)
+                            ? null
+                            : chunk.getSection(sectionIndex);
+
+                    // The whole point: one palette test instead of up to 4096
+                    // block lookups.
+                    if (section == null || section.hasOnlyAir() || !section.maybeHas(HAS_FLUID)) {
+                        y = sectionTop + 1;
+                        continue;
                     }
+
+                    for (int yy = y; yy <= sectionTop; yy++) {
+                        for (int x = x0; x <= x1; x++) {
+                            for (int z = z0; z <= z1; z++) {
+                                net.minecraft.world.level.material.FluidState fluid =
+                                    section.getFluidState(x & 15, yy & 15, z & 15);
+                                if (!fluid.isEmpty()) {
+                                    cursor.set(x, yy, z);
+                                    level.scheduleTick(cursor.immutable(), fluid.getType(),
+                                        fluid.getType().getTickDelay(level));
+                                }
+                            }
+                        }
+                    }
+                    y = sectionTop + 1;
                 }
             }
         }

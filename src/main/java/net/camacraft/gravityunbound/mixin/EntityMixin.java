@@ -341,6 +341,42 @@ public abstract class EntityMixin {
         cir.setReturnValue(result.collidedMovement);
     }
 
+    /**
+     * A RIDER SITS ON ITS MOUNT'S FRAME. Vanilla seats a passenger by adding
+     * the riding offset on the WORLD Y axis
+     * ({@code callback.accept(passenger, getX(), getY() + offset, getZ())}),
+     * so under rotated gravity the rider is placed straight up in world terms
+     * while its mount's back is somewhere else entirely — the player model
+     * floating clear of a horse standing in a field, by the whole height of
+     * the seat.
+     *
+     * Boats and minecarts already override this with frame-aware versions of
+     * their own; this is for everything that uses the inherited one — horses,
+     * pigs, striders, camels, modded mounts. Offset along the mount's own
+     * frame up instead, the axis its model is actually drawn along. Mounts
+     * with a vanilla frame keep the vanilla path untouched.
+     */
+    @Inject(
+        method = "positionRider(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity$MoveFunction;)V",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private void gravityunbound$framePositionRider(
+        Entity passenger, Entity.MoveFunction callback, CallbackInfo ci
+    ) {
+        Entity self = (Entity) (Object) this;
+        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(self);
+        if (comp == null || comp.isVisuallyDefault() || !self.hasPassenger(passenger)) {
+            return;
+        }
+        double seat = self.getPassengersRidingOffset() + passenger.getMyRidingOffset();
+        Vec3 offset = RotationUtil.vecPlayerToWorld(
+            new Vec3(0.0, seat, 0.0), comp.getVisualRotation());
+        callback.accept(passenger,
+            self.getX() + offset.x, self.getY() + offset.y, self.getZ() + offset.z);
+        ci.cancel();
+    }
+
     @Inject(method = "tick", at = @At("HEAD"))
     private void tick(CallbackInfo ci)
     {
@@ -1241,9 +1277,18 @@ public abstract class EntityMixin {
         AABB aabb = this.getBoundingBox();
         BlockPos min = BlockPos.containing(aabb.minX + 1.0E-7D, aabb.minY + 1.0E-7D, aabb.minZ + 1.0E-7D);
         BlockPos max = BlockPos.containing(aabb.maxX - 1.0E-7D, aabb.maxY - 1.0E-7D, aabb.maxZ - 1.0E-7D);
-        if (!this.level.hasChunksAt(min, max)) {
-            return;
-        }
+
+        // THE WORLD'S CHUNKS GATE THE WORLD'S LOOP, AND NOTHING ELSE.
+        //
+        // This used to return outright, which took the ship scan at the bottom
+        // of the method with it. A ship's chunks live in the shipyard and are
+        // kept loaded by Valkyrien Skies for as long as the ship exists, so
+        // they have nothing to do with whether the WORLD chunks under a
+        // vehicle have arrived -- and a vehicle on a ship flying over unloaded
+        // terrain, or over the edge of the world, is an ordinary situation. In
+        // that state one missing world chunk silently removed every ship block
+        // from the game for this entity.
+        boolean worldLoaded = this.level.hasChunksAt(min, max);
 
         double radius = net.camacraft.gravityunbound.util.CapsuleCollider.capsuleRadius(self);
         double height = net.camacraft.gravityunbound.util.CapsuleCollider.capsuleHeight(self, radius);
@@ -1253,7 +1298,7 @@ public abstract class EntityMixin {
         double radiusSq = radius * radius;
 
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int x = min.getX(); x <= max.getX(); x++) {
+        for (int x = min.getX(); worldLoaded && x <= max.getX(); x++) {
             for (int y = min.getY(); y <= max.getY(); y++) {
                 for (int z = min.getZ(); z <= max.getZ(); z++) {
                     boolean touched = false;
@@ -1288,6 +1333,131 @@ public abstract class EntityMixin {
                             category, this.level, cursor, blockState
                         );
                         throw new net.minecraft.ReportedException(crashReport);
+                    }
+                }
+            }
+        }
+
+        // AND THE SHIPS, because cancelling the vanilla method cancelled theirs.
+        //
+        // Valkyrien Skies relays entityInside into shipyard blocks by injecting
+        // at the TAIL of Entity.checkInsideBlocks. This method cancels that
+        // whole method at HEAD, so VS's relay never runs -- and the scan above
+        // only ever reads world-space blocks. The result is that no block on any
+        // ship can act on an entity while the capsule owns collision: pressure
+        // plates, portals, and the dash and glide panels this is reported
+        // against all go dead.
+        //
+        // It is intermittent in exactly the way reported -- "it works a few
+        // moments after I leave the gravity field" -- because useCapsuleCollision
+        // follows the field, so the panels come back only once the frame has
+        // settled and the capsule hands collision back.
+        //
+        // So do VS's job here: the same per-block entityInside loop, in each
+        // nearby ship's own space, with the capsule tested against the ship's
+        // blocks rather than the world's.
+        gravityunbound$capsuleInsideShipBlocks(self, aabb, offsets, up, feet, radiusSq);
+    }
+
+    /**
+     * Runs {@code entityInside} for ship blocks the capsule is touching.
+     *
+     * <p>The counterpart of the world-space scan above. A ship's blocks live in a
+     * distant shipyard region and are reached through the ship's transform, so an
+     * entity standing on a deck is nowhere near them in world coordinates -- the
+     * capsule's sphere centres have to be carried into each ship's space before
+     * they mean anything there.
+     */
+    @org.spongepowered.asm.mixin.Unique
+    private void gravityunbound$capsuleInsideShipBlocks(
+        Entity self, AABB worldBox, double[] offsets, Vec3 up, Vec3 feet, double radiusSq
+    ) {
+        for (org.valkyrienskies.core.api.ships.Ship ship :
+                org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(this.level, worldBox)) {
+
+            org.joml.Matrix4dc toShip = ship.getWorldToShip();
+
+            // The capsule's centres, carried into this ship's space.
+            org.joml.Vector3d[] centres = new org.joml.Vector3d[offsets.length];
+            for (int i = 0; i < offsets.length; i++) {
+                centres[i] = toShip.transformPosition(new org.joml.Vector3d(
+                    feet.x + up.x * offsets[i],
+                    feet.y + up.y * offsets[i],
+                    feet.z + up.z * offsets[i]));
+            }
+
+            // The block range to walk, from the transformed box.
+            org.joml.primitives.AABBd shipBox = new org.joml.primitives.AABBd(
+                worldBox.minX, worldBox.minY, worldBox.minZ,
+                worldBox.maxX, worldBox.maxY, worldBox.maxZ).transform(toShip);
+
+            BlockPos min = BlockPos.containing(shipBox.minX - 1.0, shipBox.minY - 1.0, shipBox.minZ - 1.0);
+            BlockPos max = BlockPos.containing(shipBox.maxX + 1.0, shipBox.maxY + 1.0, shipBox.maxZ + 1.0);
+
+            // ASK ABOUT THE BOX, NOT ABOUT THE SLACK AROUND IT.
+            //
+            // The +/-1.0 above is iteration slack, so that a sphere just
+            // outside a block still visits it. Testing chunks over the
+            // WIDENED range asks a different and much harsher question: at a
+            // shipyard chunk corner the widened rectangle reaches into a
+            // diagonal neighbour, and Valkyrien Skies activates a ship block's
+            // own chunk plus its four ORTHOGONAL neighbours -- not its
+            // diagonals. So a perfectly ordinary deck position could name a
+            // chunk that was never sent, and `continue` then dropped the whole
+            // ship: every block on it stopped acting on the entity, which is
+            // the dash panels going dead.
+            //
+            // Test the real box instead, and skip individual cells whose chunk
+            // is absent rather than the ship they belong to.
+            if (!this.level.hasChunksAt(
+                    BlockPos.containing(shipBox.minX + 0.001, shipBox.minY + 0.001, shipBox.minZ + 0.001),
+                    BlockPos.containing(shipBox.maxX - 0.001, shipBox.maxY - 0.001, shipBox.maxZ - 0.001))) {
+                continue;
+            }
+
+            BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+            for (int x = min.getX(); x <= max.getX(); x++) {
+                for (int y = min.getY(); y <= max.getY(); y++) {
+                    for (int z = min.getZ(); z <= max.getZ(); z++) {
+                        boolean touched = false;
+                        for (org.joml.Vector3d c : centres) {
+                            double dx = c.x - Mth.clamp(c.x, x, x + 1.0);
+                            double dy = c.y - Mth.clamp(c.y, y, y + 1.0);
+                            double dz = c.z - Mth.clamp(c.z, z, z + 1.0);
+                            if (dx * dx + dy * dy + dz * dz < radiusSq) {
+                                touched = true;
+                                break;
+                            }
+                        }
+                        if (!touched) {
+                            continue;
+                        }
+                        // Per CELL, so a cell in the iteration slack whose
+                        // chunk was never sent is skipped on its own rather
+                        // than taking the whole ship with it. An unloaded
+                        // chunk reads as air, which would be a silent wrong
+                        // answer here instead of a missing one.
+                        if (!this.level.hasChunk(x >> 4, z >> 4)) {
+                            continue;
+                        }
+                        cursor.set(x, y, z);
+                        BlockState blockState = this.level.getBlockState(cursor);
+                        if (blockState.isAir()) {
+                            continue;
+                        }
+                        try {
+                            blockState.entityInside(this.level, cursor, self);
+                            this.onInsideBlock(blockState);
+                        } catch (Throwable throwable) {
+                            net.minecraft.CrashReport crashReport =
+                                net.minecraft.CrashReport.forThrowable(
+                                    throwable, "Colliding entity with ship block");
+                            net.minecraft.CrashReportCategory category =
+                                crashReport.addCategory("Block being collided with");
+                            net.minecraft.CrashReportCategory.populateBlockDetails(
+                                category, this.level, cursor, blockState);
+                            throw new net.minecraft.ReportedException(crashReport);
+                        }
                     }
                 }
             }

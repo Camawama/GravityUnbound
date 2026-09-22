@@ -546,6 +546,27 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * world's again".
      */
     private boolean frameFromShip = false;
+
+    /**
+     * Ticks since a ship surface was last held, for clearing
+     * {@link #frameFromShip}. See the latch in {@code normalizeTwist}.
+     */
+    private int ticksSinceShipFrame = 0;
+
+    /**
+     * How long the frame stays "from a ship" after the last ship surface.
+     *
+     * <p>A grace rather than an instant clear, because {@code
+     * getHeldSurfaceShip()} flickers null for single ticks as a vehicle
+     * bounces over a deck seam, and clearing on one of those would let the
+     * twist unwinder fire in the middle of a hull -- which turns the vehicle,
+     * and is the whole reason the gate exists.
+     *
+     * <p>Twenty-five is Valkyrien Skies' own
+     * {@code TICKS_TO_DRAG_ENTITIES}, i.e. the window VS itself treats an
+     * entity as still belonging to a ship it has left.
+     */
+    private static final int SHIP_FRAME_GRACE = 25;
     private @Nullable Direction lastSyncedDirection = null;
     private double lastSyncedStrength = 1.0;
 
@@ -1227,8 +1248,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * exact vanilla with full look/velocity compensation and log it.
      */
     private void capsuleExitWatchdog() {
-        if (entity instanceof net.minecraft.world.entity.projectile.Projectile
-            || shouldAcceptServerSync()) {
+        // NO LONGER SERVER-ONLY, and that was the hole this exists to plug.
+        //
+        // It used to return here under shouldAcceptServerSync() -- a client's
+        // copy of any entity that is not the client player -- which is exactly
+        // the case where the latch is unrecoverable. The server can always fix
+        // itself: normalizeTwist anchors it, and failing that this watchdog
+        // did. A client holding a stale frame for somebody else's vehicle had
+        // neither, because both return at their head for precisely that
+        // entity, so the only cure was destroying the entity: a relog.
+        //
+        // The client branch below heals locally and sends nothing, which is
+        // the part that has to stay true -- a client must not push a frame at
+        // the server for an entity it does not own.
+        if (entity instanceof net.minecraft.world.entity.projectile.Projectile) {
             capsuleNoInfluenceTicks = 0;
             return;
         }
@@ -1244,7 +1277,31 @@ public class GravityCapabilityImpl implements IGravityCapability {
             capsuleNoInfluenceTicks = 0;
             return;
         }
+        // A FIELD IS AN INFLUENCE EVEN WHEN THE GRACE COUNTER SAYS IT IS NOT.
+        //
+        // fieldGraceTicks is SERVER bookkeeping. On a client's copy of a ridden
+        // vehicle it reads 0 the entire time the vehicle is inside a field --
+        // measured, not assumed: every client sample in the field logs is
+        // "grace=0 held=null" while the same line's field= carries a live
+        // sideways or upward pull. So the four tests below all pass inside a
+        // field, and without this one the watchdog "rescued" a vehicle that was
+        // legitimately upside down under a ceiling field, forced its frame back
+        // to DOWN, and was overwritten by the next server sync a tick later --
+        // gravity releasing and snapping back twice a second for as long as the
+        // driver stayed in the field. Reported from play exactly that way, and
+        // the log carries 26 of this method's own warnings to prove it,
+        // several of them reading "dir=up".
+        //
+        // The target vector is the right test because it is the one piece of
+        // field state the client genuinely maintains for a remote entity, and
+        // because it is exactly what separates the two cases: a frame stuck
+        // non-default with nothing pulling it reads plain DOWN here, which is
+        // the state this watchdog exists to escape.
+        boolean pulledSomewhere = targetGravityVector != null
+            && targetGravityVector.distanceToSqr(DOWN) > 1.0E-6;
+
         boolean influenced = fieldGraceTicks > 0
+            || pulledSomewhere
             || lastGroundNormal != null
             || !baseGravityDirection.equals(DOWN)
             || entity.getVehicle() != null;
@@ -1253,6 +1310,11 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
         if (++capsuleNoInfluenceTicks < 40) {
+            return;
+        }
+
+        if (shouldAcceptServerSync()) {
+            healCapsuleLatchLocally();
             return;
         }
 
@@ -1290,6 +1352,58 @@ public class GravityCapabilityImpl implements IGravityCapability {
         compensateFrameChange(old, visualRotation);
         updateBoundingBox();
         needsSync = true;
+        capsuleNoInfluenceTicks = 0;
+    }
+
+    /**
+     * The same forced exit, for a client's copy of somebody else's entity.
+     *
+     * <p>Separate from the server path because two of the things that path
+     * does must not happen here. {@code needsSync} is the server's channel and
+     * a client has no business setting it, and {@code publishFrameYawReparam}
+     * is one half of a server-to-client pair -- publishing it on the receiving
+     * side would apply a yaw correction for a frame change the sender never
+     * made.
+     *
+     * <p><b>The synced target has to go too.</b> Without that this is a
+     * one-tick repair and nothing more: {@code advanceVisualRotation} pins a
+     * remote entity's target onto {@code syncedVisualTarget} every tick and the
+     * chase snaps the frame back onto it, so healing the frame alone would be
+     * undone before the next collision. Overwritten with canonical rather than
+     * nulled, because null falls through to {@code computeVisualTarget}, whose
+     * ridden-vehicle branch holds whatever frame it already has -- which is the
+     * state being escaped.
+     *
+     * <p>This is a guess about the server's frame, and a safe one: the only way
+     * to arrive here is two full seconds with no field, no grace, no held
+     * surface, plain base gravity and nothing being ridden. If the server
+     * disagrees it says so on its next sync and the frame comes straight back.
+     */
+    private void healCapsuleLatchLocally() {
+        LOGGER.warn(
+            "[GravityUnbound] client capsule mode stuck with no gravity influence on {}"
+                + " (dir={}, w={}); healing locally",
+            entity.getType().toShortString(), currGravityDirection, visualRotation.w()
+        );
+
+        Quaternionf old = new Quaternionf(visualRotation);
+        currGravityDirection = Direction.DOWN;
+        prevGravityDirection = Direction.DOWN;
+        serverDirectionDisagreeStreak = 0;
+
+        Quaternionf canonical = RotationUtil.getWorldRotationQuaternion(Direction.DOWN);
+        visualRotation.set(canonical);
+        visualTarget.set(canonical);
+        prevVisualRotation.set(canonical);
+        if (syncedVisualTarget != null) {
+            syncedVisualTarget.set(canonical);
+        }
+
+        // Pays the frame change in yaw exactly as the server path does, so
+        // nothing visibly turns. For a ridden vehicle the yaw is the client's
+        // to write, which is the one place this is allowed to.
+        compensateFrameChange(old, visualRotation);
+        updateBoundingBox();
         capsuleNoInfluenceTicks = 0;
     }
 
@@ -1394,6 +1508,18 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (offset.lengthSqr() < 1.0E-12) {
             return;
         }
+        // THE BODY IS ALREADY MOVED, inside clearFromBlocks, which ends with
+        // entity.setPos(position().add(offset)) and hands the offset back. So
+        // this shifts ONLY the interpolation start, by the same amount, and
+        // that is the whole of what is needed: both ends of the render lerp
+        // then move together and no slide is drawn.
+        //
+        // A second setPos was added here on 2026-09-21 in the belief that the
+        // body was never moved. It was wrong -- it double-applied the step,
+        // putting the body twice as far off the face and drawing a one-frame
+        // slide of the same size in the opposite direction, which is the
+        // symptom it was meant to remove. Do not add it back without checking
+        // line 4437 first.
         entity.xo += offset.x;
         entity.yo += offset.y;
         entity.zo += offset.z;
@@ -2351,7 +2477,23 @@ public class GravityCapabilityImpl implements IGravityCapability {
                     boolean atomicStep =
                         angleBetween(wasRiding, visualRotation) > (float) Math.toRadians(45);
                     if (atomicStep) {
-                        prevVisualRotation.set(visualRotation);
+                        // FROM THE VEHICLE'S OWN START, not from the rider's
+                        // finish. Collapsing onto visualRotation pinned the rider
+                        // at the END of the step for the whole tick, while the
+                        // vehicle -- whose applyGravityChange premul had already
+                        // moved its interpolation start, leaving only the chase
+                        // step to sweep -- was drawn sweeping through it. The
+                        // two were 20-25 degrees apart for exactly one tick on
+                        // the first tick of every field release, and the rider
+                        // visibly sat off the seat. Measured frame by frame.
+                        //
+                        // Passengers tick after their vehicle (tickPassenger),
+                        // so the vehicle's prevVisualRotation here is this
+                        // tick's: the twist already paid, the tilt still to
+                        // sweep. Adopting it makes the rider draw the identical
+                        // arc, which is the only invariant that matters -- the
+                        // rider's start must equal the vehicle's start.
+                        prevVisualRotation.set(riddenComp.prevVisualRotation);
                     }
 
                     float yawWas = entity.getYRot();
@@ -2578,10 +2720,33 @@ public class GravityCapabilityImpl implements IGravityCapability {
         // current on the tick the gate below is finally reached. See
         // frameFromShip: the settle gate alone means most ticks return before
         // the gate, and the one tick that does not is the one that matters.
+        // AND IT HAS TO BE ABLE TO CLEAR, which it could not.
+        //
+        // The clear was `else if (isVisuallyDefault())` alone, and the gate
+        // below returns while frameFromShip is set -- above the twist-removal
+        // block, which is the only thing that can shed a holonomy twist and so
+        // the only route to becoming default for any residual bigger than
+        // EXACT_ANCHOR_ANGLE. The flag could therefore only be cleared by the
+        // state it was preventing: drive off a rotated hull carrying more than
+        // 0.15 degrees of residual and it latched.
+        //
+        // With no escape. The capsule watchdog does not help here, because its
+        // "influenced" test counts a held ground normal -- and the case that
+        // reaches this is precisely a vehicle that LEFT a ship and is now
+        // sitting on a gravity surface in the world, where lastGroundNormal is
+        // non-null and lastGroundShip is not a ship. Held frame, no unwind, no
+        // watchdog, capsule collision on for the rest of the session: no
+        // vanilla step-up, so no driving up a slope and no driving over
+        // another vehicle. Same end state as the sync gap in the exact-anchor
+        // branch above, by a different road.
         if (getHeldSurfaceShip() != null) {
             frameFromShip = true;
-        } else if (isVisuallyDefault()) {
-            frameFromShip = false;
+            ticksSinceShipFrame = 0;
+        } else {
+            ticksSinceShipFrame++;
+            if (isVisuallyDefault() || ticksSinceShipFrame > SHIP_FRAME_GRACE) {
+                frameFromShip = false;
+            }
         }
 
         Quaternionf canonical = RotationUtil.getWorldRotationQuaternion(currGravityDirection);
@@ -2602,6 +2767,56 @@ public class GravityCapabilityImpl implements IGravityCapability {
             visualTarget.set(canonical);
             prevVisualRotation.set(canonical);
             compensateFrameChange(old, visualRotation);
+
+            // AND THE YAW HALF OF IT, measured the way the main path below
+            // measures its own: the pure local-Y component of the rotation
+            // from the old frame to the new one.
+            //
+            // compensateFrameChange pays for this snap in yaw, and for a
+            // ridden vehicle the server's yaw write is discarded because the
+            // client owns it -- so without publishing, the client receives a
+            // frame that moved and a yaw that did not, and the world heading
+            // turns by the residual. Capped at EXACT_ANCHOR_ANGLE, so it is
+            // 0.15 degrees per settle rather than a lurch; four settles round
+            // a plated cube is most of a degree of heading that nobody asked
+            // for, which is the shape of "my yaw is always slightly offset".
+            //
+            // The sibling branch at the bottom of this method has published
+            // since it was written. This one simply never did.
+            Quaternionf anchorReparam =
+                new Quaternionf(old).mul(new Quaternionf(canonical).conjugate());
+            if (anchorReparam.w() < 0) {
+                anchorReparam.set(-anchorReparam.x(), -anchorReparam.y(),
+                                  -anchorReparam.z(), -anchorReparam.w());
+            }
+            publishFrameYawReparam(
+                2.0 * Math.atan2(anchorReparam.y(), anchorReparam.w()));
+
+            // ...AND TELL THE CLIENT THE FRAME WENT HOME.
+            //
+            // This branch is where a frame that has settled within a hair of
+            // canonical gets snapped bit-exactly onto it, and that snap is the
+            // difference between isVisuallyDefault() and not -- which is the
+            // difference between vanilla collision and capsule collision. It
+            // ran server-side only and published nothing, so the SERVER left
+            // capsule mode and the client was never told: the client kept
+            // chasing the last target it was sent, held a frame a fraction of
+            // a degree off identity forever, and stayed in capsule mode for
+            // the rest of the session.
+            //
+            // That is not a cosmetic desync. While capsule collision is on,
+            // EntityMixin cancels Entity.collide outright -- which is where
+            // BOTH vanilla step-up and entity collision live -- so the client
+            // stopped being able to drive a vehicle up a slope block or over
+            // another vehicle, and only a relog (a fresh capability at
+            // identity) fixed it. Reported from play as exactly that pair.
+            //
+            // needsSync rather than waiting for the deadband: maybeSendSync
+            // only sends on its own when the target has moved more than 0.05
+            // RADIANS, which is nearly three degrees, and the whole point of
+            // this branch is a change far smaller than that which nonetheless
+            // flips a boolean the client's collision depends on.
+            needsSync = true;
             return;
         }
 
@@ -2883,7 +3098,48 @@ public class GravityCapabilityImpl implements IGravityCapability {
             // heading we started with gives t = atan2(riddenUp . (a x b), a . b)
             // with both vectors flattened into the plane perpendicular to
             // riddenUp.
-            if (riddenUp.y > 0.999) {
+            // A FIELD THAT PULLS STRAIGHT DOWN IS STILL A FIELD.
+            //
+            // The note above says it plainly: "re-levelling to world up is a
+            // release, and entry to any field that is not straight down is
+            // not." The second half is the assumption, and a gravity CUBE
+            // breaks it -- on the top face the core pulls straight down, so
+            // arriving there is an entry whose target up is world up, and the
+            // test reads it as a release.
+            //
+            // What that does is not subtle. The lock pins the heading the
+            // vehicle had on the WALL while the arc lays it flat on the roof,
+            // and it writes the difference in as a pure twist with no
+            // compensateFrameChange and no publishFrameYawReparam -- by
+            // design, because changing the heading is the whole point of a
+            // release. So the yaw shift is permanent, it lands in one step at
+            // the edge, and the driver keeps going in the new direction.
+            // Reported from play: "as I approach the edge of the cube going
+            // straight forward, all of a sudden my yaw is rotated to the right
+            // and my vehicle continues driving in that offset direction."
+            //
+            // And it fires on the top face ONLY, which is why the author sees
+            // N->E->S->W->N as flawless: riddenUp is the face normal exactly,
+            // so its y is 1 on the top, -1 on the bottom and 0 on all four
+            // sides. One of six passes the gate.
+            //
+            // The grace counter is the missing half of the test. A release is
+            // reached by the field STOPPING: resolveGravityTarget holds
+            // targetGravityVector on the field while fieldGraceTicks is open,
+            // so the target only becomes world up once the grace has run out
+            // -- which is exactly when the lock should fire. A field that is
+            // still delivering, cube top face included, keeps the grace
+            // refreshed and is now excluded.
+            //
+            // The note's objection to field state -- that a non-player entity
+            // computes no gravity on the client, so a field-state trigger
+            // would fire on one side only -- does not reach this branch. For a
+            // ridden vehicle the client never runs it: preferLocal needs
+            // fieldGraceTicks > 0 and the client's is always 0, so the client
+            // takes the server's synced target verbatim. Confirmed in the
+            // session logs, where every client sample reads grace=0 including
+            // deep inside a field.
+            if (riddenUp.y > 0.999 && fieldGraceTicks <= 0) {
                 Vec3 headingAfter = RotationUtil.vecPlayerToWorld(
                     RotationUtil.rotToVec(entity.getYRot(), 0), out
                 );

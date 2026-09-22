@@ -47,6 +47,17 @@ public final class FieldVisualsRenderer {
     private static final float DASH_LENGTH = 0.35f;
     private static final float DASH_SPACING = 1.0f;
 
+    /**
+     * Most flow lines one plate field may draw in a frame.
+     *
+     * <p>Without a cap the count is the field's VOLUME in blocks, which a
+     * profiler found spending 16% of total frame time on a single session's
+     * plates. Two thousand lines is four thousand vertices -- comfortably
+     * inside what immediate mode absorbs, and dense enough that a field has to
+     * be bigger than about 13 blocks cubed before the grid thins at all.
+     */
+    private static final int MAX_FLOW_LINES = 2000;
+
     /** The 26 fixed radial spoke directions for core flow. */
     private static final Vec3[] SPOKES = buildSpokes();
 
@@ -357,8 +368,39 @@ public final class FieldVisualsRenderer {
         Direction.Axis tangentB = axis == Direction.Axis.Z ? Direction.Axis.Y : Direction.Axis.Z;
 
         int dashes = Math.max(1, (int) Math.ceil(depth / DASH_SPACING));
-        for (double a = Math.floor(box.min(tangentA)) + 0.5; a < box.max(tangentA); a += 1.0) {
-            for (double b = Math.floor(box.min(tangentB)) + 0.5; b < box.max(tangentB); b += 1.0) {
+
+        // BUDGETED, because the natural spelling of this loop is O(VOLUME).
+        //
+        // One flow line per block of cross-section, times one dash per block of
+        // depth, is width x height x depth lines -- 32,768 of them, 65,536
+        // vertices, for a modest 32-block cube, per plate, EVERY FRAME, through
+        // the immediate-mode BufferBuilder. A profile of a real session put
+        // this method at 16% of total frame time, about a quarter of what the
+        // entire rest of the world costs to render.
+        //
+        // The flow field reads the same at a coarser grid, so spend a fixed
+        // budget of lines instead of a fixed density: thin the tangent grid
+        // until the field fits. A small plate is unchanged (stride stays 1),
+        // and a large one gets a sparser, evenly spaced set of lines rather
+        // than a frame-rate cliff.
+        //
+        // Thinning the TANGENT grid rather than the dashes is deliberate: the
+        // dashes are what animate, so dropping them would make the flow stutter
+        // instead of merely thin out.
+        double spanA = box.max(tangentA) - box.min(tangentA);
+        double spanB = box.max(tangentB) - box.min(tangentB);
+        int cellsA = Math.max(1, (int) Math.ceil(spanA));
+        int cellsB = Math.max(1, (int) Math.ceil(spanB));
+
+        double stride = 1.0;
+        long lines = (long) cellsA * cellsB * dashes;
+        if (lines > MAX_FLOW_LINES) {
+            // Both tangents thin together, so the grid stays square.
+            stride = Math.ceil(Math.sqrt((double) lines / MAX_FLOW_LINES));
+        }
+
+        for (double a = Math.floor(box.min(tangentA)) + 0.5; a < box.max(tangentA); a += stride) {
+            for (double b = Math.floor(box.min(tangentB)) + 0.5; b < box.max(tangentB); b += stride) {
                 for (int k = 0; k < dashes; k++) {
                     double s = ((k + march) * DASH_SPACING) % depth;
                     double end = Math.min(s + DASH_LENGTH, depth);

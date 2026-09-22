@@ -2768,6 +2768,18 @@ public class GravityCapabilityImpl implements IGravityCapability {
             prevVisualRotation.set(canonical);
             compensateFrameChange(old, visualRotation);
 
+            // THE STORED BOX CHANGES SHAPE HERE, SO REBUILD IT HERE. This snap
+            // is what flips useCapsuleCollision() off, and with it what
+            // makeBoundingBox returns: the tilted envelope until now, the
+            // vanilla box from now. Nothing else rebuilds it until the next
+            // move()'s setPos, so for the rest of this tick every reader of
+            // getBoundingBox() -- vanilla's push-out-of-blocks above all, which
+            // resumes on this exact tick -- saw the previous tick's envelope
+            // while the collision was already vanilla. The residual tilt is
+            // under 0.15 degrees, so the mismatch was microscopic; it is closed
+            // structurally rather than relied on.
+            updateBoundingBox();
+
             // AND THE YAW HALF OF IT, measured the way the main path below
             // measures its own: the pure local-Y component of the rotation
             // from the old frame to the new one.
@@ -2959,10 +2971,68 @@ public class GravityCapabilityImpl implements IGravityCapability {
         visualRotation.premul(twistDelta).normalize();
         prevVisualRotation.premul(twistDelta).normalize();
         visualTarget.premul(twistDelta).normalize();
-        if (lastChaseTarget != null) {
-            lastChaseTarget.premul(twistDelta).normalize();
-        }
+        lastChaseTarget.premul(twistDelta).normalize();
         compensateFrameChange(old, visualRotation);
+
+        reparametrizePassengers(old, twistDelta);
+    }
+
+    /**
+     * Applies a vehicle's re-parametrization to the riders wearing its frame,
+     * in the same instant.
+     *
+     * <p>A passenger of a non-living vehicle adopts the vehicle's frame
+     * verbatim -- but only in its OWN tick, in the passenger block of
+     * {@link #advanceVisualRotation()}. This packet lands on the main thread
+     * between two renders. Until the rider's next tick the rider's frame is
+     * therefore the vehicle's OLD frame, while the vehicle's yaw pair has
+     * already moved by the twist -- and MKW Mobility's follow camera reads
+     * exactly that pair: it builds the view from the RIDER's render frame and
+     * the VEHICLE's yaw, carrying the yaw shift the same frame it lands. Old
+     * frame, new yaw: the view turns by the whole twist for every frame until
+     * the rider's tick, then sweeps back as the rider adopts. Reported from play
+     * as the camera and player model snapping sideways for a moment and back
+     * into line with the kart, at the settle after every field release.
+     *
+     * <p>So the rider is re-parametrized here, with the identical twist and the
+     * identical yaw compensation, so that frame and yaw move together on both
+     * entities within one frame. The rider's next-tick adoption then finds no
+     * step and does nothing.
+     *
+     * <p>Guarded on the rider actually wearing the frame it is being twisted
+     * away from: {@code equals} first, because the passenger block copies with
+     * {@code set()} and the two are bit-identical; a tolerance only as a
+     * fallback, and a generous one, because {@code angleBetween} on float
+     * quaternions reads up to a milliradian for identical frames. A rider whose
+     * frame is something else -- just mounted, mid atomic step -- is left to the
+     * passenger block, which is today's behaviour.
+     *
+     * <p>Client-side only, like the caller. Nothing is published and nothing is
+     * marked for sync: a client must not push a frame at the server for an
+     * entity it does not own, and a rider never accumulates a reparam total of
+     * its own (normalizeTwist is reached only through the tail of
+     * advanceVisualRotation, which passengers leave early).
+     */
+    private void reparametrizePassengers(Quaternionf oldFrame, Quaternionf twistDelta) {
+        if (entity == null || entity instanceof LivingEntity) {
+            return;
+        }
+        for (Entity passenger : entity.getPassengers()) {
+            GravityCapabilityImpl pc = GravityChangerAPI.getGravityComponentOrNull(passenger);
+            if (pc == null) {
+                continue;
+            }
+            if (!pc.visualRotation.equals(oldFrame)
+                && angleBetween(pc.visualRotation, oldFrame) > (float) Math.toRadians(0.5)) {
+                continue;
+            }
+            Quaternionf riderOld = new Quaternionf(pc.visualRotation);
+            pc.visualRotation.premul(twistDelta).normalize();
+            pc.prevVisualRotation.premul(twistDelta).normalize();
+            pc.visualTarget.premul(twistDelta).normalize();
+            pc.lastChaseTarget.premul(twistDelta).normalize();
+            pc.compensateFrameChange(riderOld, pc.visualRotation);
+        }
     }
 
     private void compensateFrameChange(Quaternionf oldFrame, Quaternionf newFrame) {
@@ -4125,6 +4195,26 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 entity.setDeltaMovement(RotationUtil.vecWorldToPlayer(world, this.visualRotation));
             }
             updateBoundingBox();
+
+            // AND THE RIDERS WEARING THIS FRAME STEP WITH IT. Same reason as
+            // reparametrizePassengers: this runs between renders, and a rider
+            // adopts only in its own tick. Mirrors the vehicle's treatment
+            // exactly -- the frame is set, no yaw is compensated (this branch
+            // compensates none on the vehicle either) -- so the pair stays
+            // consistent and the passenger block finds nothing to do. Guarded
+            // on the rider wearing the frame being replaced, as there.
+            if (entity != null && !(entity instanceof LivingEntity)) {
+                for (Entity passenger : entity.getPassengers()) {
+                    GravityCapabilityImpl pc = GravityChangerAPI.getGravityComponentOrNull(passenger);
+                    if (pc == null || !pc.visualRotation.equals(oldFrame)) {
+                        continue;
+                    }
+                    pc.visualRotation.set(this.visualRotation);
+                    pc.prevVisualRotation.set(this.visualRotation);
+                    pc.visualTarget.set(this.visualRotation);
+                    pc.lastChaseTarget.set(this.visualRotation);
+                }
+            }
         }
     }
 

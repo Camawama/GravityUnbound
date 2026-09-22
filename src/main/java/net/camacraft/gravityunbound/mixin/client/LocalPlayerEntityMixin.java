@@ -60,7 +60,35 @@ public abstract class LocalPlayerEntityMixin extends AbstractClientPlayer {
         cancellable = true
     )
     private void inject_pushOutOfBlocks(double x, double z, CallbackInfo ci) {
-        if (GravityChangerAPI.isGravityDefault(this)) return;
+        // THE CAPSULE PREDICATE, NOT THE CARDINAL.
+        //
+        // This used to stand down on isGravityDefault(), which is the snapped
+        // cardinal (currGravityDirection == DOWN). The collider it exists to
+        // defer to is switched by useCapsuleCollision(), which is the FRAME
+        // (!isVisuallyDefault). The two disagree for the whole of a side-to-top
+        // walk on a gravity cube: the cardinal snaps to DOWN the tick after the
+        // top face is adopted, while the frame still has 60 degrees to chase and
+        // the capsule stays on for the next several ticks.
+        //
+        // In that window vanilla ran against the STORED box, which in capsule
+        // mode is the tilted envelope built from the previous move. Its bottom
+        // sits 0.02*(1-cos tilt) below the floor the real spheres rest on (the
+        // envelope uses width/2, the collider 14/15 of it), so suffocatesAt read
+        // the cube's top layer as a suffocating block under every column, and
+        // moveTowardsClosestSpace wrote +-0.1 on a WORLD axis toward the one
+        // free neighbour -- the edge just crossed -- straight into
+        // deltaMovement, which Entity.move reads in the LOCAL frame. The
+        // transported frame still carries the side face's holonomy twist, so
+        // that push came out along world Z whichever face was left: north from
+        // the west and east faces, south from the north and south faces.
+        // Reported from play as exactly that table.
+        //
+        // Gating on the collider's own predicate makes the cancel cover the whole
+        // capsule window and nothing more: a bit-canonical identity frame keeps
+        // vanilla's push-out exactly as before.
+        net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
+            GravityChangerAPI.getGravityComponentOrNull(this);
+        if (comp == null || !comp.useCapsuleCollision()) return;
 
         // the capsule collider keeps the player out of blocks; the vanilla
         // box-based push-out fights it and causes jitter

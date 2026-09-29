@@ -1,142 +1,195 @@
 package net.camacraft.gravityunbound.mixin.client;
 
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
+import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.util.RotationUtil;
-import org.joml.Matrix3f;
-import org.joml.Matrix4f;
-import org.spongepowered.asm.mixin.Final;
+import org.jetbrains.annotations.Nullable;
+import org.joml.Quaternionf;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.math.Axis;
-
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.entity.EntityRenderer;
-import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.entity.FishingHookRenderer;
-import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FishingHook;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.common.ToolActions;
 
+/**
+ * Fishing line under a rotated gravity frame.
+ *
+ * Vanilla builds the line's rod-tip end (locals d4/d5/d6, then f3, a lift
+ * added straight up the WORLD y axis) from world-axis offsets: the camera
+ * near-plane point swung by the attack animation in first person, a
+ * body-yaw arm offset in third person. Under a rotated frame both must be
+ * expressed in the owner's frame. This used to HEAD-cancel render and draw
+ * a full copy, which silently dropped every other mod's change to the same
+ * method (Nice Catch's hook-in-mouth billboard tilt and rod-stand line
+ * anchor) and flipped the arm for modded rods (it tested the vanilla rod
+ * item instead of Forge's FISHING_ROD_CAST tool action).
+ *
+ * Now only the offsets are wrapped, BEFORE the tip coordinates are stored:
+ * <ul>
+ *   <li>first person: the near-plane point is taken into the player frame
+ *       (getPointOnPlane), vanilla scales and swings it there unchanged, and
+ *       the swung offset returns to the world frame (xRot) with the eye
+ *       lift applied along the player's up — minus the world-y lift vanilla
+ *       adds as f3 afterwards;</li>
+ *   <li>third person: the frame-rotated arm offset minus vanilla's world-axis
+ *       one is added to the tip's base terms (Mth.lerp x/z, getEyeHeight
+ *       for y — f3's crouch dip included, since vanilla adds it on world y
+ *       later).</li>
+ * </ul>
+ * The bobber billboard, f3 and everything else stay vanilla.
+ *
+ * COMPOSITION: Nice Catch rewrites d4/d5/d6 with @ModifyVariable at STORE,
+ * which runs AFTER each store; these wraps change the value BEFORE it is
+ * stored. So whatever the mixin order, a stand-parked line still snaps to
+ * its stand (NC's anchor replaces the frame-correct hand tip), and an
+ * ordinary line reaches NC's hook unchanged. NC pre-subtracts vanilla's
+ * world-y f3 lift from its anchor, which stays valid because f3 is left
+ * alone here.
+ */
 @Mixin(FishingHookRenderer.class)
-public abstract class FishingHookEntityRendererMixin extends EntityRenderer<FishingHook> {
-    @Shadow
-    @Final
-    private static RenderType RENDER_TYPE;
-    
-    @Shadow
-    private static void vertex(VertexConsumer buffer, Matrix4f matrix, Matrix3f normalMatrix, int light, float x, int y, int u, int v) {}
-    
-    @Shadow
-    private static void stringVertex(float x, float y, float z, VertexConsumer buffer, PoseStack.Pose normal, float f, float g) {}
-    
-    @Shadow
-    private static float fraction(int value, int max) {return 0.0F;}
-    
-    protected FishingHookEntityRendererMixin(EntityRendererProvider.Context ctx) {
-        super(ctx);
-    }
-    
-    // TODO mixin fishing hook rendering in a better way
-    @Inject(
+public abstract class FishingHookEntityRendererMixin {
+
+    // ------------------------------------------------------------------
+    // first person (the local player's own line)
+    // ------------------------------------------------------------------
+
+    @WrapOperation(
         method = "Lnet/minecraft/client/renderer/entity/FishingHookRenderer;render(Lnet/minecraft/world/entity/projectile/FishingHook;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
-        at = @At("HEAD"),
-        cancellable = true
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/Camera$NearPlane;getPointOnPlane(FF)Lnet/minecraft/world/phys/Vec3;"
+        )
     )
-    public void inject_render(FishingHook fishingBobberEntity, float yaw, float tickDelta, PoseStack matrixStack, MultiBufferSource vertexConsumerProvider, int light, CallbackInfo ci) {
-        Player playerEntity = fishingBobberEntity.getPlayerOwner();
-        if (playerEntity == null) return;
+    private Vec3 gravityunbound$nearPlaneToPlayerFrame(Camera.NearPlane plane, float left, float up, Operation<Vec3> original, FishingHook hook, float entityYaw, float partialTicks) {
+        Vec3 point = original.call(plane, left, up);
+        Quaternionf frame = gravityunbound$lineFrame(hook, partialTicks);
+        return frame == null ? point : RotationUtil.vecWorldToPlayer(point, frame);
+    }
 
-        // the player model renders in the smooth interpolated visual frame,
-        // so the rod-tip/line offsets must use the SAME frame — the snapped
-        // cardinal made the line detach from the rod during transitions and
-        // on tilted ships (and the old DOWN gate skipped tilted frames whose
-        // cardinal was still DOWN)
-        net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
-            GravityChangerAPI.getGravityComponentOrNull(playerEntity);
-        if (comp == null || comp.isRenderDefault()) return;
-        org.joml.Quaternionf renderRotation = comp.getRenderRotation(tickDelta);
+    @WrapOperation(
+        method = "Lnet/minecraft/client/renderer/entity/FishingHookRenderer;render(Lnet/minecraft/world/entity/projectile/FishingHook;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/phys/Vec3;xRot(F)Lnet/minecraft/world/phys/Vec3;"
+        )
+    )
+    private Vec3 gravityunbound$swungOffsetToWorld(Vec3 offset, float pitch, Operation<Vec3> original, FishingHook hook, float entityYaw, float partialTicks) {
+        Vec3 swung = original.call(offset, pitch);
+        Quaternionf frame = gravityunbound$lineFrame(hook, partialTicks);
+        if (frame == null) {
+            return swung;
+        }
+        // vanilla then adds the eye height (f3) up the WORLD y axis
+        double eye = hook.getPlayerOwner().getEyeHeight();
+        return RotationUtil.vecPlayerToWorld(swung.add(0.0D, eye, 0.0D), frame).subtract(0.0D, eye, 0.0D);
+    }
 
-        ci.cancel();
-        
-        matrixStack.pushPose();
-        matrixStack.pushPose();
-        matrixStack.scale(0.5F, 0.5F, 0.5F);
-        matrixStack.mulPose(this.entityRenderDispatcher.cameraOrientation());
-        matrixStack.mulPose(Axis.YP.rotationDegrees(180.0F));
-        PoseStack.Pose entry = matrixStack.last();
-        Matrix4f matrix4f = entry.pose();
-        Matrix3f matrix3f = entry.normal();
-        VertexConsumer vertexConsumer = vertexConsumerProvider.getBuffer(RENDER_TYPE);
-        vertex(vertexConsumer, matrix4f, matrix3f, light, 0.0F, 0, 0, 1);
-        vertex(vertexConsumer, matrix4f, matrix3f, light, 1.0F, 0, 1, 1);
-        vertex(vertexConsumer, matrix4f, matrix3f, light, 1.0F, 1, 1, 0);
-        vertex(vertexConsumer, matrix4f, matrix3f, light, 0.0F, 1, 0, 0);
-        matrixStack.popPose();
-        int armOffset = playerEntity.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
-        ItemStack itemStack = playerEntity.getMainHandItem();
-        if (!itemStack.is(Items.FISHING_ROD)) {
-            armOffset = -armOffset;
+    // ------------------------------------------------------------------
+    // third person (every other line, and your own in F5)
+    // Mth.lerp(DDD) calls in render: 0-2 first-person tip, 3 third-person
+    // tip x, 4 third-person tip z, 5-7 bobber. getEyeHeight: 0 first
+    // person (f3), 1 third-person tip y.
+    // ------------------------------------------------------------------
+
+    @WrapOperation(
+        method = "Lnet/minecraft/client/renderer/entity/FishingHookRenderer;render(Lnet/minecraft/world/entity/projectile/FishingHook;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/util/Mth;lerp(DDD)D",
+            ordinal = 3
+        )
+    )
+    private double gravityunbound$thirdPersonTipX(double delta, double start, double end, Operation<Double> original, FishingHook hook, float entityYaw, float partialTicks) {
+        double x = original.call(delta, start, end);
+        Vec3 correction = gravityunbound$thirdPersonCorrection(hook, partialTicks);
+        return correction == null ? x : x + correction.x;
+    }
+
+    @WrapOperation(
+        method = "Lnet/minecraft/client/renderer/entity/FishingHookRenderer;render(Lnet/minecraft/world/entity/projectile/FishingHook;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/player/Player;getEyeHeight()F",
+            ordinal = 1
+        )
+    )
+    private float gravityunbound$thirdPersonTipY(Player player, Operation<Float> original, FishingHook hook, float entityYaw, float partialTicks) {
+        float eye = original.call(player);
+        Vec3 correction = gravityunbound$thirdPersonCorrection(hook, partialTicks);
+        return correction == null ? eye : (float) (eye + correction.y);
+    }
+
+    @WrapOperation(
+        method = "Lnet/minecraft/client/renderer/entity/FishingHookRenderer;render(Lnet/minecraft/world/entity/projectile/FishingHook;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/util/Mth;lerp(DDD)D",
+            ordinal = 4
+        )
+    )
+    private double gravityunbound$thirdPersonTipZ(double delta, double start, double end, Operation<Double> original, FishingHook hook, float entityYaw, float partialTicks) {
+        double z = original.call(delta, start, end);
+        Vec3 correction = gravityunbound$thirdPersonCorrection(hook, partialTicks);
+        return correction == null ? z : z + correction.z;
+    }
+
+    /**
+     * The owner's interpolated visual frame, or null when the line should
+     * render exactly as vanilla. The player model renders in the smooth
+     * interpolated visual frame, so the rod-tip offsets must use the SAME
+     * frame — the snapped cardinal made the line detach from the rod during
+     * transitions and on tilted ships.
+     */
+    @Unique
+    @Nullable
+    private static Quaternionf gravityunbound$lineFrame(FishingHook hook, float partialTicks) {
+        Player player = hook.getPlayerOwner();
+        if (player == null) {
+            return null;
         }
-        
-        float handSwingProgress = playerEntity.getAttackAnim(tickDelta);
-        float sinHandSwingProgress = Mth.sin(Mth.sqrt(handSwingProgress) * 3.1415927F);
-        float radBodyYaw = Mth.lerp(tickDelta, playerEntity.yBodyRotO, playerEntity.yBodyRot) * 0.017453292F;
-        double sinBodyYaw = Mth.sin(radBodyYaw);
-        double cosBodyYaw = Mth.cos(radBodyYaw);
-        double scaledArmOffset = (double) armOffset * 0.35D;
-        Vec3 lineStart;
-        if ((this.entityRenderDispatcher.options == null || this.entityRenderDispatcher.options.getCameraType().isFirstPerson()) && playerEntity == Minecraft.getInstance().player) {
-            Vec3 lineOffset = RotationUtil.vecWorldToPlayer(this.entityRenderDispatcher.camera.getNearPlane().getPointOnPlane((float) armOffset * 0.525F, -0.1F), renderRotation);
-            lineOffset = lineOffset.scale(960.0D / this.entityRenderDispatcher.options.fov().get());
-            lineOffset = lineOffset.yRot(sinHandSwingProgress * 0.5F);
-            lineOffset = lineOffset.xRot(-sinHandSwingProgress * 0.7F);
-            lineStart = new Vec3(
-                Mth.lerp(tickDelta, playerEntity.xo, playerEntity.getX()),
-                Mth.lerp(tickDelta, playerEntity.yo, playerEntity.getY()),
-                Mth.lerp(tickDelta, playerEntity.zo, playerEntity.getZ())
-            ).add(RotationUtil.vecPlayerToWorld(lineOffset.add(0.0D, playerEntity.getEyeHeight(), 0.0D), renderRotation));
+        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(player);
+        if (comp == null || comp.isRenderDefault()) {
+            return null;
         }
-        else {
-            lineStart = new Vec3(
-                Mth.lerp(tickDelta, playerEntity.xo, playerEntity.getX()),
-                playerEntity.yo + (playerEntity.getY() - playerEntity.yo) * tickDelta,
-                Mth.lerp(tickDelta, playerEntity.zo, playerEntity.getZ())
-            ).add(RotationUtil.vecPlayerToWorld(
-                -cosBodyYaw * scaledArmOffset - sinBodyYaw * 0.8D,
-                playerEntity.getEyeHeight() + (playerEntity.isCrouching() ? -0.1875D : 0.0D) - 0.45D,
-                -sinBodyYaw * scaledArmOffset + cosBodyYaw * 0.8D,
-                renderRotation
-            ));
+        return comp.getRenderRotation(partialTicks);
+    }
+
+    /**
+     * Frame-rotated third-person rod-tip offset minus the world-axis one
+     * vanilla uses (arm offset from body yaw, eye height less 0.45, crouch
+     * dip), or null when the frame is default.
+     */
+    @Unique
+    @Nullable
+    private static Vec3 gravityunbound$thirdPersonCorrection(FishingHook hook, float partialTicks) {
+        Quaternionf frame = gravityunbound$lineFrame(hook, partialTicks);
+        if (frame == null) {
+            return null;
         }
-        
-        double bobberX = Mth.lerp(tickDelta, fishingBobberEntity.xo, fishingBobberEntity.getX());
-        double bobberY = Mth.lerp(tickDelta, fishingBobberEntity.yo, fishingBobberEntity.getY()) + 0.25D;
-        double bobberZ = Mth.lerp(tickDelta, fishingBobberEntity.zo, fishingBobberEntity.getZ());
-        float relX = (float) (lineStart.x - bobberX);
-        float relY = (float) (lineStart.y - bobberY);
-        float relZ = (float) (lineStart.z - bobberZ);
-        VertexConsumer vertexConsumer2 = vertexConsumerProvider.getBuffer(RenderType.lineStrip());
-        PoseStack.Pose entry2 = matrixStack.last();
-        
-        for (int i = 0; i <= 16; ++i) {
-            stringVertex(relX, relY, relZ, vertexConsumer2, entry2, fraction(i, 16), fraction(i + 1, 16));
+        Player player = hook.getPlayerOwner();
+        int arm = player.getMainArm() == HumanoidArm.RIGHT ? 1 : -1;
+        if (!player.getMainHandItem().canPerformAction(ToolActions.FISHING_ROD_CAST)) {
+            arm = -arm;
         }
-        
-        matrixStack.popPose();
-        super.render(fishingBobberEntity, yaw, tickDelta, matrixStack, vertexConsumerProvider, light);
+        float bodyYaw = Mth.lerp(partialTicks, player.yBodyRotO, player.yBodyRot) * ((float) Math.PI / 180F);
+        double sin = Mth.sin(bodyYaw);
+        double cos = Mth.cos(bodyYaw);
+        double armOffset = (double) arm * 0.35D;
+        Vec3 local = new Vec3(
+            -cos * armOffset - sin * 0.8D,
+            player.getEyeHeight() + (player.isCrouching() ? -0.1875D : 0.0D) - 0.45D,
+            -sin * armOffset + cos * 0.8D
+        );
+        return RotationUtil.vecPlayerToWorld(local, frame).subtract(local);
     }
 }

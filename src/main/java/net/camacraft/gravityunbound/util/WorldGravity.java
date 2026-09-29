@@ -1,10 +1,9 @@
 package net.camacraft.gravityunbound.util;
 
 import org.jetbrains.annotations.Nullable;
-import org.joml.Quaterniond;
-import org.joml.Vector3d;
 import org.valkyrienskies.core.api.ships.Ship;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.compat.AdAstraCompat;
 
@@ -30,6 +29,10 @@ public final class WorldGravity {
 
     /** The level's ambient entity gravity as a WORLD vector, blocks/tick^2. */
     public static Vec3 ambient(Level level) {
+        // VS Genesis's space dimensions have none: a blending field there is the only gravity
+        if (net.camacraft.camafy.compat.gravity.GravitySources.isGenesisSpace(level)) {
+            return Vec3.ZERO;
+        }
         Vec3 down = DimensionGravity.downFor(level);
         if (down == null) {
             down = new Vec3(0.0, -1.0, 0.0);
@@ -43,9 +46,7 @@ public final class WorldGravity {
         if (ship == null) {
             return world;
         }
-        Vector3d v = new Quaterniond(ship.getTransform().getShipToWorldRotation()).conjugate()
-            .transform(new Vector3d(world.x, world.y, world.z));
-        return new Vec3(v.x, v.y, v.z);
+        return VsTyped.dirToShip(ship, world);
     }
 
     /** A blended entity gravity: unit direction and strength as a multiple of vanilla. */

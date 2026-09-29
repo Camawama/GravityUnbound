@@ -2,7 +2,7 @@ package net.camacraft.gravityunbound.mixin.client;
 
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
-import net.camacraft.gravityunbound.util.QuaternionUtil;
+import net.camacraft.camafy.util.math.QuaternionUtil;
 import org.joml.Quaternionf;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -238,7 +238,7 @@ public abstract class CameraMixin {
      * The ship half: the point carried into the shipyard space of every ship
      * whose box contains it.
      *
-     * <p>Built on {@code getShipsIntersecting} plus {@code getWorldToShip},
+     * <p>Built on {@code VsTyped.intersecting} plus {@code getWorldToShip},
      * the same idiom {@code EntityMixin}'s capsule scan uses, so there is one
      * way of asking this question in the mod rather than two.
      */
@@ -247,8 +247,7 @@ public abstract class CameraMixin {
         net.minecraft.world.phys.AABB probe =
                 new net.minecraft.world.phys.AABB(point, point).inflate(1.0E-4);
         for (org.valkyrienskies.core.api.ships.Ship ship :
-                org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(
-                        context.level(), probe)) {
+                net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(context.level(), probe)) {
             org.joml.Vector3d inShip = ship.getWorldToShip()
                     .transformPosition(new org.joml.Vector3d(point.x, point.y, point.z));
             if (gravityunbound$solidAt(context, new Vec3(inShip.x, inShip.y, inShip.z))) {

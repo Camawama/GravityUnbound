@@ -2,8 +2,7 @@ package net.camacraft.gravityunbound.network;
 
 import java.util.function.Supplier;
 
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
-
+import net.camacraft.camafy.compat.vs.Ships;
 import net.camacraft.gravityunbound.core.GravityCoreBlockEntity;
 import net.camacraft.gravityunbound.normalizer.GravityNormalizerBlockEntity;
 import net.camacraft.gravityunbound.plating.GravityPlatingBlockEntity;
@@ -115,7 +114,7 @@ public class UpdateGravityBlockSettingsPacket
 					return;
 				}
 				if (player.distanceToSqr(Vec3.atCenterOf(pos)) >= MAX_DISTANCE_SQ
-					&& VSGameUtilsKt.getShipManagingPos(level, pos) == null)
+					&& !Ships.inShipyard(level, pos))
 				{
 					return;
 				}

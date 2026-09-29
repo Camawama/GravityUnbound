@@ -435,14 +435,29 @@ public abstract class EntityMixin {
     ) {
         Vec3 offset = RotationUtil.vecPlayerToWorld(new Vec3(localX, 0.0, localZ), frame);
         Vec3 from = self.position().add(offset).add(up.scale(0.05));
+        Vec3 to = from.subtract(up.scale(0.05 + 0.6));
         net.minecraft.world.phys.BlockHitResult hit = self.level().clip(new net.minecraft.world.level.ClipContext(
             from,
-            from.subtract(up.scale(0.05 + 0.6)),
+            to,
             net.minecraft.world.level.ClipContext.Block.COLLIDER,
             net.minecraft.world.level.ClipContext.Fluid.NONE,
             self
         ));
-        return hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK;
+        if (hit.getType() == net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            return false;
+        }
+        // the capsule stands on hard-collision entities too (a boat, a
+        // shulker, a still happy ghast): vanilla's guard counts their boxes,
+        // and a block-only probe froze a crouching player on top of one
+        for (net.minecraft.world.phys.shapes.VoxelShape shape
+                : self.level().getEntityCollisions(self, new AABB(from, to).inflate(1.0E-3))) {
+            for (AABB box : shape.toAabbs()) {
+                if (box.contains(from) || box.clip(from, to).isPresent()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     @WrapOperation(method = "Lnet/minecraft/world/entity/Entity;makeBoundingBox()Lnet/minecraft/world/phys/AABB;", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/EntityDimensions;makeBoundingBox(Lnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/AABB;"))
@@ -1373,7 +1388,7 @@ public abstract class EntityMixin {
         Entity self, AABB worldBox, double[] offsets, Vec3 up, Vec3 feet, double radiusSq
     ) {
         for (org.valkyrienskies.core.api.ships.Ship ship :
-                org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(this.level, worldBox)) {
+                net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(this.level, worldBox)) {
 
             org.joml.Matrix4dc toShip = ship.getWorldToShip();
 

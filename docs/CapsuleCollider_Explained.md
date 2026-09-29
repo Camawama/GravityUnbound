@@ -72,6 +72,20 @@ ship's own **shipyard coordinate space** and the ship's real blocks are
 collected there, tagged with their ship. (VS's own world-space collision for
 entities is an approximation; the capsule bypasses it entirely.)
 
+Hard-collision **entities** join last: boats, minecarts, shulkers, Vanilla
+Backport's happy ghast, anything whose `canBeCollidedWith()` makes it solid to
+stand on at plain gravity. They come from `level.getEntityCollisions(mover,
+region)`, the same query vanilla's `collide` makes, so vanilla's rules apply
+unchanged: spectators never count, a boat or minecart also blocks pushable
+mobs, and nothing in the mover's own vehicle stack is an obstacle (same root
+vehicle), so a rider never collides with its boat nor a boat with its
+passengers. Entity boxes are world space, all six faces exposed. A box the
+capsule already sits deep inside when the move starts is skipped, the way
+vanilla's swept collision ignores a shape it already overlaps (otherwise an
+entity turning solid around a body, like a happy ghast when someone lands on
+it, would throw that body clear in one tick). The pose test (`fits`) stays
+blocks-and-ships only.
+
 ### 3.2 Substepped sweep
 
 The movement is split into substeps no longer than half a sphere radius (so a

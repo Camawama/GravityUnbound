@@ -13,7 +13,11 @@ import net.camacraft.gravityunbound.mob_effect.GravityDirectionMobEffect;
 import net.camacraft.gravityunbound.network.GravityNetwork;
 import net.camacraft.gravityunbound.network.UpdateGravityCapabilityPacket;
 import net.camacraft.gravityunbound.util.GCUtil;
-import net.camacraft.gravityunbound.util.QuaternionUtil;
+import net.camacraft.camafy.compat.vs.ShipEntities;
+import net.camacraft.camafy.compat.vs.ShipRef;
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
+import net.camacraft.camafy.physics.PhysicsOwnership;
+import net.camacraft.camafy.util.math.QuaternionUtil;
 import net.camacraft.gravityunbound.util.RotationUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,7 +40,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import net.minecraftforge.network.PacketDistributor;
 
 /**
  * Gravity state for one entity.
@@ -124,6 +127,9 @@ public class GravityCapabilityImpl implements IGravityCapability {
     private final org.joml.Quaterniond attachRot = new org.joml.Quaterniond();
     private final org.joml.Quaterniond attachRotPrev = new org.joml.Quaterniond();
     private boolean attachRotValid = false;
+    // whether updateShipAttachment kept VS's dragging alive for an AIRBORNE
+    // rider last tick (see there); ending that hold disarms the waiver it armed
+    private boolean shipRideHeld = false;
     // eased 0..1 engagement of the render-time reconstruction (smooth
     // snap-in when a ship field is entered, smooth release when it is left);
     // the previous tick's value is kept so the render pass can interpolate
@@ -209,6 +215,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // taking them off, or walking off the last surface, can let go exactly
     // once — never a hold some other field owns)
     public boolean clingHeldLastTick = false;
+    // Game time a gravity plating field last held this entity in its PRIMARY
+    // column (the plate's footprint and outward range, not the sideways
+    // bleed): set by GravityPlatingBlockEntity.tick. With the entity grounded
+    // this is "standing on plating", which Camafy's Gravity.isAnchored
+    // reports (Full Stop then never throws it off a ship that stops).
+    public long lastPlatingFieldTick = Long.MIN_VALUE;
     // Whether the dominant field source allows planet-walk surface snapping
     // (per-block "snap" toggle on plating/cores). Resolved per tick in
     // resolveGravityTarget; true under base gravity / no field.
@@ -331,6 +343,9 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 * (1.0 - along) + 0.05;
             if (clearance > 0.06) {
                 entity.setPos(entity.position().add(held.scale(clearance)));
+                // a placement step, not motion: physics mods (Full Stop)
+                // must not read it as velocity or bill it as an impact
+                PhysicsOwnership.markDiscontinuity(entity);
             }
         }
     }
@@ -388,7 +403,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
         try {
-            if (org.valkyrienskies.mod.common.util.EntityShipCollisionUtils.isCollidingWithUnloadedShips(entity)) {
+            if (ShipEntities.isCollidingWithUnloadedShips(entity)) {
                 LOGGER.info("[GravityUnbound] Valkyrien Skies is freezing {} at {} (its box overlaps a ship whose shipyard chunks "
                     + "are not all loaded, so VS cancels every move()): onGround={} up={} box={}",
                     entity.getName().getString(), entity.position(), entity.onGround(), getUpVector(), entity.getBoundingBox());
@@ -684,9 +699,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
             && (dbgEffectsQueued > 0 || lastGroundNormal != null || !isVisuallyDefault())) {
             Vec3 tUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualTarget);
             Vec3 fUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualRotation);
-            boolean vsDraggable = org.valkyrienskies.mod.common.util.EntityDragger.isDraggable(entity);
-            org.valkyrienskies.mod.common.util.EntityDraggingInformation dbgDrag =
-                ((org.valkyrienskies.mod.common.util.IEntityDraggingInformationProvider) entity).getDraggingInformation();
+            boolean vsDraggable = ShipEntities.isDraggable(entity);
+            org.valkyrienskies.mod.common.util.EntityDraggingInformation dbgDrag = VsTyped.dragInfo(entity);
             LOGGER.info(
                 "[GravityUnbound] vs-drag[{}]: draggable={} beingDragged={} shipRef={} ticksSince={} camVsTickDist={}",
                 entity.level().isClientSide() ? "C" : "S",
@@ -1022,10 +1036,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
 
-        org.joml.Quaterniond now =
-            new org.joml.Quaterniond(ship.getTransform().getShipToWorldRotation());
-        org.joml.Quaterniond prev =
-            new org.joml.Quaterniond(ship.getPrevTickTransform().getShipToWorldRotation());
+        org.joml.Quaterniond now = VsTyped.rotation(ship, ShipRef.Pose.TICK);
+        org.joml.Quaterniond prev = VsTyped.rotation(ship, ShipRef.Pose.PREV_TICK);
         org.joml.Quaterniond delta = now.mul(prev.conjugate(), new org.joml.Quaterniond()).normalize();
         if (delta.w < 0) {
             delta.set(-delta.x, -delta.y, -delta.z, -delta.w);
@@ -1094,6 +1106,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
         attachShip = ship;
 
+        boolean holdingRide = false;
         if (ship != null) {
             renderAttachShip = ship;
 
@@ -1102,22 +1115,22 @@ public class GravityCapabilityImpl implements IGravityCapability {
             boolean airborne = !passenger
                 && (useCapsuleCollision() ? !capsuleGrounded : !entity.onGround());
             if (airborne) {
-                org.valkyrienskies.mod.common.util.EntityDraggingInformation dragInfo =
-                    ((org.valkyrienskies.mod.common.util.IEntityDraggingInformationProvider) entity)
-                        .getDraggingInformation();
-                Long current = dragInfo.getLastShipStoodOn();
-                if (current == null || current != ship.getId()) {
-                    dragInfo.setLastShipStoodOn(ship.getId());
-                }
-                // (also clears VS's ship-change impulse flag)
-                dragInfo.setTicksSinceStoodOnShip(0);
-                // VS's collide wrapper wipes the standing state whenever the
-                // collide result differs from its own ship-adjusted movement
-                // (an airborne capsule brushing geometry does that); this is
-                // VS's own escape hatch for exactly that wipe
-                dragInfo.setIgnoreNextGroundStand(true);
+                // registers the ship (only when it changed), restarts VS's
+                // 25-tick window and clears its ship-change impulse flag; and
+                // since VS's collide wrapper wipes the standing state whenever
+                // the collide result differs from its own ship-adjusted
+                // movement (an airborne capsule brushing geometry does that),
+                // arms VS's own escape hatch for exactly that wipe
+                ShipEntities.keepRiding(entity, ship.getId());
+                holdingRide = true;
             }
         }
+        if (shipRideHeld && !holdingRide) {
+            // the airborne hold ended: disarm the wipe waiver it left armed,
+            // so VS's normal hand-off applies from here on
+            ShipEntities.releaseRiding(entity);
+        }
+        shipRideHeld = holdingRide;
 
         // eased engagement of the render reconstruction: ~7 ticks in, ~7 out
         // (interpolated per frame by the render pass, see attachWeightPrev)
@@ -1220,7 +1233,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 return;
             }
             org.joml.Vector3d p = new org.joml.Vector3d(entity.getX(), entity.getY(), entity.getZ());
-            anchorTransform.getWorldToShipMatrix().transformPosition(p);
+            anchorTransform.getWorldToShip().transformPosition(p);
             shipAnchorPos = p;
             shipAnchorShipId = ship.getId();
             entity.setDeltaMovement(RotationUtil.vecWorldToPlayer(normal.scale(normalVel), visualRotation));
@@ -1228,7 +1241,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
 
         org.joml.Vector3d w = new org.joml.Vector3d(shipAnchorPos);
-        anchorTransform.getShipToWorldMatrix().transformPosition(w);
+        anchorTransform.getShipToWorld().transformPosition(w);
         if (entity.position().distanceToSqr(w.x, w.y, w.z) > 1.0) {
             // ship teleported or badly desynced: don't yank the player around
             shipAnchorPos = null;
@@ -1689,9 +1702,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
         org.valkyrienskies.core.api.ships.Ship carryShip =
             capsuleGroundShip != null ? capsuleGroundShip : lastGroundShip;
         if (carryShip != null) {
-            org.joml.Vector3d prevPoint = new org.joml.Vector3d(entity.getX(), entity.getY(), entity.getZ());
-            carryShip.getTransform().getWorldToShipMatrix().transformPosition(prevPoint);
-            carryShip.getPrevTickTransform().getShipToWorldMatrix().transformPosition(prevPoint);
+            // where this world point, glued to the ship, was last tick
+            Vec3 prevPoint = VsTyped.currentToPrevTick(carryShip, entity.position());
             // the ship moved this world point by (pos - prevPoint) over the tick
             moved = moved.subtract(
                 entity.getX() - prevPoint.x,
@@ -2122,11 +2134,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
 
         Vec3 normal = Vec3.atLowerCornerOf(hit.getDirection().getNormal());
+        net.minecraft.core.BlockPos hitPos = hit.getBlockPos();
         org.valkyrienskies.core.api.ships.Ship ship =
-            org.valkyrienskies.mod.common.VSGameUtilsKt.getShipManagingPos(entity.level(), hit.getBlockPos());
+            VsTyped.managing(entity.level(), hitPos.getX(), hitPos.getY(), hitPos.getZ());
         if (ship != null) {
             org.joml.Vector3d n = new org.joml.Vector3d(normal.x, normal.y, normal.z);
-            ship.getTransform().getShipToWorldMatrix().transformDirection(n);
+            ship.getTransform().getShipToWorld().transformDirection(n);
             n.normalize();
             normal = new Vec3(n.x, n.y, n.z);
         }
@@ -2205,7 +2218,10 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (entity instanceof Player player && player.getAbilities().flying) {
             return;
         }
-        if (living.isFallFlying() || living.isNoGravity() || entity.isInWater() || entity.isInLava()
+        // A no-gravity entity (VS Genesis's space) inside a field is pulled by the field pull
+        // deficit along the lagging frame, so it needs the same correction; outside one nothing
+        // pulls it and there is nothing to correct.
+        if (living.isFallFlying() || (living.isNoGravity() && fieldGraceTicks <= 0) || entity.isInWater() || entity.isInLava()
             || entity.isPassenger()) {
             return;
         }
@@ -2230,7 +2246,9 @@ public class GravityCapabilityImpl implements IGravityCapability {
         double gravityAccel = BASE_GRAVITY_ACCEL * currGravityStrength;
         net.minecraft.world.entity.ai.attributes.AttributeInstance gravityAttr =
             living.getAttribute(net.minecraftforge.common.ForgeMod.ENTITY_GRAVITY.get());
-        if (gravityAttr != null) {
+        // (a no-gravity entity's pull is the deficit's BASE x strength, not the attribute, which
+        // travel() never applies to it)
+        if (gravityAttr != null && !living.isNoGravity()) {
             gravityAccel = gravityAttr.getValue();
         }
         Vec3 correction = targetDown.subtract(frameDown).scale(gravityAccel);
@@ -3598,7 +3616,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return false;
         }
         org.joml.Vector3d seat = new org.joml.Vector3d(vehicle.getX(), vehicle.getY(), vehicle.getZ());
-        ship.getTransform().getWorldToShipMatrix().transformPosition(seat);
+        ship.getTransform().getWorldToShip().transformPosition(seat);
         boolean fielded = vehicleComp.isGravityOverridden()
             || net.camacraft.gravityunbound.util.GravityFieldLookup.hasEntityFieldAt(
                 entity.level(), net.minecraft.core.BlockPos.containing(seat.x, seat.y, seat.z));
@@ -3655,7 +3673,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         double tolerance = 0.0;
         if (fieldRegionShip != null) {
             org.joml.Vector3d g = new org.joml.Vector3d(p.x, p.y, p.z);
-            fieldRegionShip.getTransform().getWorldToShipMatrix().transformPosition(g);
+            fieldRegionShip.getTransform().getWorldToShip().transformPosition(g);
             p = new Vec3(g.x, g.y, g.z);
             tolerance = 1.0;
         }
@@ -3692,6 +3710,55 @@ public class GravityCapabilityImpl implements IGravityCapability {
      */
     public boolean isGravityOverridden() {
         return fieldGraceTicks > 0 || !baseGravityDirection.equals(DOWN);
+    }
+
+    /**
+     * Whether fields here pull entities flagged no-gravity that aren't living (items, carts, TNT,
+     * projectiles): in VS Genesis's space dimensions, which flag every entity (Camafy knows them
+     * whatever the config lists), and in the artificialGravityDimensions list.
+     */
+    public static boolean pullsWeightlessThings(net.minecraft.world.level.Level world) {
+        return net.camacraft.camafy.compat.gravity.GravitySources.isGenesisSpace(world)
+            || GravityConfig.artificialGravityDimensions.get().contains(world.dimension().location().toString());
+    }
+
+    /** An entity's own vanilla gravity, blocks per tick squared: what a field's strength scales. */
+    private static double vanillaGravity(Entity entity) {
+        if (entity instanceof net.minecraft.world.entity.projectile.AbstractArrow) {
+            return 0.05;
+        }
+        if (entity instanceof net.minecraft.world.entity.projectile.ThrowableProjectile
+            || entity instanceof net.minecraft.world.entity.projectile.FishingHook
+            || entity instanceof net.minecraft.world.entity.ExperienceOrb) {
+            return 0.03;
+        }
+        if (entity instanceof net.minecraft.world.entity.projectile.LlamaSpit) {
+            return 0.06;
+        }
+        if (entity instanceof net.minecraft.world.entity.item.ItemEntity
+            || entity instanceof net.minecraft.world.entity.item.FallingBlockEntity
+            || entity instanceof net.minecraft.world.entity.item.PrimedTnt
+            || entity instanceof net.minecraft.world.entity.vehicle.AbstractMinecart
+            || entity instanceof net.minecraft.world.entity.vehicle.Boat) {
+            return 0.04;
+        }
+        return BASE_GRAVITY_ACCEL;
+    }
+
+    /**
+     * True while a field (or its grace window) acts on this entity: the
+     * window in which {@link #applyFieldPullDeficit} supplies the field's
+     * pull even to no-gravity entities. Only counted on the side that
+     * computes this entity's gravity (a client's copy of another entity
+     * reads false).
+     */
+    public boolean isInField() {
+        return fieldGraceTicks > 0;
+    }
+
+    /** The id of the forge:entity_gravity modifier that carries this capability's strength. */
+    public static java.util.UUID strengthModifierId() {
+        return GRAVITY_STRENGTH_MODIFIER_ID;
     }
 
     /** The ship the dominant field is mounted on, or null. */
@@ -3809,7 +3876,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (fieldAnchorShip != null && fieldAnchorLocalPos != null) {
             org.joml.Vector3d center = new org.joml.Vector3d(
                 fieldAnchorLocalPos.x, fieldAnchorLocalPos.y, fieldAnchorLocalPos.z);
-            fieldAnchorShip.getTransform().getShipToWorldMatrix().transformPosition(center);
+            fieldAnchorShip.getTransform().getShipToWorld().transformPosition(center);
             Vec3 toCenter = new Vec3(center.x, center.y, center.z).subtract(entity.position());
             if (toCenter.lengthSqr() > 1.0E-6) {
                 targetGravityVector = toCenter.normalize().scale(fieldAnchorRadialSign);
@@ -4081,10 +4148,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
 
     private void sendSyncPacketToOtherPlayers() {
         if (entity != null && !this.entity.level().isClientSide()) {
-            GravityNetwork.CHANNEL.send(
-                PacketDistributor.TRACKING_ENTITY_AND_SELF.with(() -> this.entity),
-                makeSyncPacket()
-            );
+            GravityNetwork.sendToTrackingAndSelf(this.entity, makeSyncPacket());
             lastSyncedDirection = currGravityDirection;
             lastSyncedStrength = currGravityStrength;
             lastSyncedVisualTarget.set(visualTarget);
@@ -4464,6 +4528,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
             entity.zOld = newLastTickPos.z;
 
             adjustEntityPosition(oldGravity, newGravity, entity.getBoundingBox());
+
+            // the turn about the rotation center (a flip lifts the body by
+            // half its height) is a snap, not motion: physics mods (Full
+            // Stop) must not read it as velocity or bill it as an impact
+            if (entity.position().distanceToSqr(oldPos) > 1.0E-12) {
+                PhysicsOwnership.markDiscontinuity(entity);
+            }
         }
 
         // No camera animation and no yaw remap: the visual frame is continuous
@@ -4483,6 +4554,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
             Vector3f worldSpaceVec = realWorldVelocity.toVector3f();
             worldSpaceVec.rotate(RotationUtil.getRotationBetween(oldGravity, newGravity));
             entity.setDeltaMovement(RotationUtil.vecWorldToPlayer(new Vec3(worldSpaceVec), newGravity));
+            // the world velocity turns in a single tick: not a collision
+            PhysicsOwnership.markDiscontinuity(entity);
         }
         else {
             // Velocity will be conserved relative to the world, will result in more natural motion
@@ -4572,6 +4645,10 @@ public class GravityCapabilityImpl implements IGravityCapability {
             entityBoundingBox, totalCollisionBox, escapeDirection
         );
         entity.setPos(entity.position().add(offset));
+        if (offset.lengthSqr() > 1.0E-12) {
+            // stepping out of blocks is not motion (see releaseCling)
+            PhysicsOwnership.markDiscontinuity(entity);
+        }
         return offset;
     }
 
@@ -5015,8 +5092,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (!applies) {
             return;
         }
-        String currentDim = world.dimension().location().toString();
-        if (!GravityConfig.artificialGravityDimensions.get().contains(currentDim)) {
+        if (!pullsWeightlessThings(world)) {
             return;
         }
         // Ad Astra dimensions: the compat layer already makes Ad Astra treat
@@ -5031,8 +5107,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (worldDown.lengthSqr() < 1.0E-8) {
             return;
         }
+        // artificialGravityAcceleration is a living entity's pull (vanilla's 0.08); items, carts,
+        // arrows and thrown things fall by their own smaller vanilla gravity, so they are pulled in
+        // that proportion, as the same field pulls them anywhere else
         Vec3 accel = worldDown.normalize()
-            .scale(GravityConfig.artificialGravityAcceleration.get() * comp.getCurrGravityStrength());
+            .scale(GravityConfig.artificialGravityAcceleration.get() * comp.getCurrGravityStrength()
+                * vanillaGravity(entity) / BASE_GRAVITY_ACCEL);
 
         // projectiles are WORLD-frame (raw position integration, world-space
         // velocity): the pull adds to their velocity directly — never

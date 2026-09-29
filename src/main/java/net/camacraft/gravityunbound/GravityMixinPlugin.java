@@ -41,6 +41,10 @@ public class GravityMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
+		if(mixinClassName.startsWith("net.camacraft.gravityunbound.mixin.compat.VanillaBackport") && LoadingModList.get().getModFileById("vanillabackport") == null)
+		{
+			return false;
+		}
 		return true;
 	}
 

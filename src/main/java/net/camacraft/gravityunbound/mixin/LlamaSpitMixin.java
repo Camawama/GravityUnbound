@@ -30,7 +30,8 @@ public class LlamaSpitMixin {
     )
     private Vec3 wrapOperation_tick_addGravity(Vec3 instance, double x, double y, double z, Operation<Vec3> original) {
         Entity self = (Entity) (Object) this;
-        double g = 0.05999999865889549D * GravityChangerAPI.getGravityStrength(self);
+        // Camafy's real local gravity: Ad Astra leaves llama spit at Earth's (see FallingBlockMixin)
+        double g = 0.05999999865889549D * net.camacraft.camafy.compat.gravity.Gravity.strength(self);
         Direction gravityDirection = GravityChangerAPI.getGravityDirection(self);
         if (gravityDirection == Direction.DOWN) {
             return original.call(instance, x, -g, z);

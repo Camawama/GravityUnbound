@@ -5,7 +5,7 @@ issueTrackerURL="https://github.com/Camawama/GravityUnbound/issues"
 
 [[mods]]
 modId="gravityunbound"
-version="1.0.2"
+version="${mod_version}"
 displayName="Gravity Unbound"
 credits="original mod by Gaider10, fork by qouteall, forge fork by min01"
 authors="cama"
@@ -18,7 +18,7 @@ description='''A Forge mod and API that allows for changing an entity's gravity 
 [[dependencies.gravityunbound]]
     modId="forge"
     mandatory=true
-    versionRange="[47,)"
+    versionRange="${forge_version_range}"
     ordering="NONE"
     side="BOTH"
 
@@ -30,8 +30,15 @@ description='''A Forge mod and API that allows for changing an entity's gravity 
     side="BOTH"
 
 [[dependencies.gravityunbound]]
+    modId="camafy"
+    mandatory=true
+    versionRange="${camafy_version_range}"
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.gravityunbound]]
     modId="valkyrienskies"
     mandatory=true
-    versionRange="[2.4.0,)"
+    versionRange="[2.4.11,)"
     ordering="AFTER"
     side="BOTH"

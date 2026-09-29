@@ -29,7 +29,7 @@ import net.minecraftforge.registries.ForgeRegistries;
  *       (blocks with block entities are politely refused).</li>
  *   <li>Right-click a surface to place a sticky mimic of the captured state,
  *       sitting ON the clicked face, spun toward the placer's look
- *       ({@code Rotation24.fromClickedFace}). Two-block-tall captures (doors,
+ *       ({@code Rotation24Placement.fromClickedFace}). Two-block-tall captures (doors,
  *       tall plants) place both halves along the mimic's local up.</li>
  * </ul>
  *

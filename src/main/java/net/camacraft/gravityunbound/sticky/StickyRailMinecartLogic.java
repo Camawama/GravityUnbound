@@ -7,6 +7,7 @@ import org.jetbrains.annotations.Nullable;
 
 import com.mojang.datafixers.util.Pair;
 
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.util.RotationUtil;
 

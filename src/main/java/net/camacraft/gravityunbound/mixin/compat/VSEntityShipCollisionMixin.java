@@ -26,8 +26,20 @@ import net.minecraft.world.phys.Vec3;
  * afloat above plating on rotated ships and causing constant stutter.
  *
  * Skip VS's adjustment entirely while the capsule owns collision.
+ *
+ * <p><b>Priority 500: this must run FIRST.</b> VLib's
+ * {@code EntityShipCollisionUtilsMixin} also injects at the HEAD of
+ * {@code adjustEntityMovementForShipCollisions}, cancellably, and ALWAYS returns
+ * its own resolution of the world box against the ship. Injections at HEAD run
+ * in the order their mixins were applied, and mixins with lower priority are
+ * applied first; at the default 1000 the two ran in mod load order. When Gravity
+ * Unbound came to depend on Camafy it loaded after VLib: VLib's handler ran
+ * first, this skip never ran, and a capsule player on a tilted ship was
+ * collided as a world-aligned box - resting 0.1 block above the plating (the
+ * capsule never touched it, so never grounded and never anchored) and sliding
+ * uphill along the deck at 0.9 m/s ("sliding off plating on rotated ships").
  */
-@Mixin(value = EntityShipCollisionUtils.class, remap = false)
+@Mixin(value = EntityShipCollisionUtils.class, remap = false, priority = 500)
 public abstract class VSEntityShipCollisionMixin {
 
     @Inject(

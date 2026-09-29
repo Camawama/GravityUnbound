@@ -25,7 +25,8 @@ public class ExperienceOrbMixin {
         index = 1
     )
     private double multiplyGravity(double x) {
-        return x * GravityChangerAPI.getGravityStrength(((Entity) (Object) this));
+        // Camafy's real local gravity: Ad Astra leaves XP orbs at Earth's (see FallingBlockMixin)
+        return x * net.camacraft.camafy.compat.gravity.Gravity.strength(((Entity) (Object) this));
     }
 
     // Vanilla ExperienceOrb.tick adds the world-space offset-to-player straight onto the orb's

@@ -7,6 +7,7 @@ import org.jetbrains.annotations.Nullable;
 
 import it.unimi.dsi.fastutil.floats.Float2FloatFunction;
 
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.init.GravityBlocks;
 
 import net.minecraft.core.BlockPos;
@@ -215,7 +216,7 @@ public class StickyChestBlock extends BaseEntityBlock {
         // null-safe: fromPlacement defaults to (DOWN, 0) without a placer.
         // Level+pos matter: on a Valkyrien Skies ship the orientation is
         // computed in SHIPYARD grid space, not world space.
-        Rotation24.Orientation orientation = Rotation24.fromPlacement(
+        Rotation24.Orientation orientation = Rotation24Placement.fromPlacement(
             context.getPlayer(), context.getLevel(), context.getClickedPos()
         );
         Direction bottom = orientation.bottom();

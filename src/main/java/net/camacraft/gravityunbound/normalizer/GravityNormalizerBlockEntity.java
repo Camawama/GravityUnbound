@@ -5,8 +5,8 @@ import java.util.List;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 import org.valkyrienskies.core.api.ships.Ship;
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.EntityTags;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.api.RotationParameters;
@@ -153,7 +153,7 @@ public class GravityNormalizerBlockEntity extends BlockEntity
             return;
         }
 
-        Ship ship = VSGameUtilsKt.getShipManagingPos(world, blockPos);
+        Ship ship = VsTyped.managing(world, blockPos.getX(), blockPos.getY(), blockPos.getZ());
 
         AABB zone = be.getZoneBox();
         be.fluidZoneCache = null;
@@ -184,7 +184,7 @@ public class GravityNormalizerBlockEntity extends BlockEntity
 
         AABB searchBox = zone;
         if (ship != null) {
-            searchBox = gravityunbound$shipToWorldBox(ship, zone);
+            searchBox = VsTyped.shipBoxToWorld(ship, zone);
         }
 
         // the GRID-local down, expressed in world space this tick — rotates
@@ -192,7 +192,7 @@ public class GravityNormalizerBlockEntity extends BlockEntity
         Vec3 worldDown = Vec3.atLowerCornerOf(be.localDown.getNormal());
         if (ship != null) {
             Vector3d d = new Vector3d(worldDown.x, worldDown.y, worldDown.z);
-            ship.getTransform().getShipToWorldMatrix().transformDirection(d);
+            ship.getTransform().getShipToWorld().transformDirection(d);
             d.normalize();
             worldDown = new Vec3(d.x, d.y, d.z);
         }
@@ -261,7 +261,7 @@ public class GravityNormalizerBlockEntity extends BlockEntity
             Vec3 testingPos = entity.position();
             if (ship != null) {
                 Vector3d p = new Vector3d(testingPos.x, testingPos.y, testingPos.z);
-                ship.getTransform().getWorldToShipMatrix().transformPosition(p);
+                ship.getTransform().getWorldToShip().transformPosition(p);
                 testingPos = new Vec3(p.x, p.y, p.z);
             }
             if (!zone.contains(testingPos)) {
@@ -275,23 +275,6 @@ public class GravityNormalizerBlockEntity extends BlockEntity
                 zone
             );
         }
-    }
-
-    private static AABB gravityunbound$shipToWorldBox(Ship ship, AABB box) {
-        Vector3d[] corners = new Vector3d[] {
-            new Vector3d(box.minX, box.minY, box.minZ), new Vector3d(box.maxX, box.minY, box.minZ),
-            new Vector3d(box.minX, box.maxY, box.minZ), new Vector3d(box.maxX, box.maxY, box.minZ),
-            new Vector3d(box.minX, box.minY, box.maxZ), new Vector3d(box.maxX, box.minY, box.maxZ),
-            new Vector3d(box.minX, box.maxY, box.maxZ), new Vector3d(box.maxX, box.maxY, box.maxZ)
-        };
-        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
-        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
-        for (Vector3d corner : corners) {
-            ship.getTransform().getShipToWorldMatrix().transformPosition(corner);
-            minX = Math.min(minX, corner.x); minY = Math.min(minY, corner.y); minZ = Math.min(minZ, corner.z);
-            maxX = Math.max(maxX, corner.x); maxY = Math.max(maxY, corner.y); maxZ = Math.max(maxZ, corner.z);
-        }
-        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     private void sync() {

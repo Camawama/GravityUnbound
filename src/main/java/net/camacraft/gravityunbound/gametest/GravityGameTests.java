@@ -4,7 +4,7 @@ import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.init.GravityBlocks;
 import net.camacraft.gravityunbound.plating.GravityPlatingBlock;
-import net.camacraft.gravityunbound.sticky.Rotation24;
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.sticky.StickyRailBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

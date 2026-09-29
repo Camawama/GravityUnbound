@@ -6,7 +6,8 @@ import java.util.List;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 import org.valkyrienskies.core.api.ships.Ship;
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
+
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
@@ -80,12 +81,9 @@ public final class CapsuleCollider {
      */
     private record Obstacle(AABB box, @Nullable Ship ship, int exposedMask, double worldToShipScale) {}
 
-    /** Uniform world->ship scale factor, measured from the transform matrix. */
+    /** Uniform world->ship scale factor: the inverse of the ship's uniform scale (1 for ordinary ships). */
     private static double worldToShipScale(Ship ship) {
-        Vector3d unit = new Vector3d(1.0, 0.0, 0.0);
-        ship.getTransform().getWorldToShipMatrix().transformDirection(unit);
-        double len = unit.length();
-        return len > 1.0E-9 ? len : 1.0;
+        return 1.0 / VsTyped.scale(ship);
     }
 
     // face index -> neighbor offset, order -x,+x,-y,+y,-z,+z
@@ -126,7 +124,7 @@ public final class CapsuleCollider {
         double height = capsuleHeight(entity, radius);
         double[] sphereOffsets = sphereOffsets(height, radius);
 
-        List<Obstacle> obstacles = gatherObstacles(entity.level(), start, movement, up, radius, height);
+        List<Obstacle> obstacles = gatherObstacles(entity, entity.level(), start, movement, up, radius, height);
 
         ResolveState state = new ResolveState();
         state.gravityUp = gravityUp;
@@ -234,7 +232,9 @@ public final class CapsuleCollider {
         double radius = Math.max(0.01, width / 2.0 * (14.0 / 15.0));
         double effectiveHeight = Math.max(height, radius * 2.0 + 0.02);
         double[] offsets = sphereOffsets(effectiveHeight, radius);
-        List<Obstacle> obstacles = gatherObstacles(entity.level(), feetPos, Vec3.ZERO, up, radius, effectiveHeight);
+        // blocks and ships only, as before: entity boxes are MOVEMENT
+        // obstacles (see collectEntities), the pose test keeps its old scope
+        List<Obstacle> obstacles = gatherObstacles(null, entity.level(), feetPos, Vec3.ZERO, up, radius, effectiveHeight);
 
         // tolerance = the collider's own resting tolerance: depenetration in
         // collide() is depth-gated at 0.02, so a capsule may legitimately
@@ -252,7 +252,7 @@ public final class CapsuleCollider {
                 Vec3 c = center;
                 if (obstacle.ship() != null) {
                     Vector3d local = new Vector3d(center.x, center.y, center.z);
-                    obstacle.ship().getTransform().getWorldToShipMatrix().transformPosition(local);
+                    obstacle.ship().getTransform().getWorldToShip().transformPosition(local);
                     c = new Vec3(local.x, local.y, local.z);
                 }
                 // radius in the obstacle's own units (shipyard space of a
@@ -385,7 +385,7 @@ public final class CapsuleCollider {
                     Vec3 c = center;
                     if (obstacle.ship != null) {
                         Vector3d local = new Vector3d(center.x, center.y, center.z);
-                        obstacle.ship.getTransform().getWorldToShipMatrix().transformPosition(local);
+                        obstacle.ship.getTransform().getWorldToShip().transformPosition(local);
                         c = new Vec3(local.x, local.y, local.z);
                     }
                     // radius and depths in the obstacle's own units: shipyard
@@ -541,7 +541,7 @@ public final class CapsuleCollider {
             return v;
         }
         Vector3d d = new Vector3d(v.x, v.y, v.z);
-        ship.getTransform().getShipToWorldMatrix().transformDirection(d);
+        ship.getTransform().getShipToWorld().transformDirection(d);
         d.normalize();
         return new Vec3(d.x, d.y, d.z);
     }
@@ -590,8 +590,12 @@ public final class CapsuleCollider {
     // body/ship scale ratio degrades to an approximate hull, never a freeze)
     private static final double MAX_LOCAL_GATHER_RADIUS = 12.0;
 
+    /**
+     * @param mover the entity being collided, whose hard-collision neighbours
+     *              join the obstacles; null gathers blocks and ships only
+     */
     private static List<Obstacle> gatherObstacles(
-        Level level, Vec3 start, Vec3 movement, Vec3 up, double radius, double height
+        @Nullable Entity mover, Level level, Vec3 start, Vec3 movement, Vec3 up, double radius, double height
     ) {
         double bodyScale = Mth.clamp(height / 1.8, 0.05, 1.0);
         AABB reach = makeEnvelope(start, up, radius * 2, height)
@@ -605,8 +609,9 @@ public final class CapsuleCollider {
         // handled exactly, in shipyard space, below)
         collectBlocks(level, reach, null, out);
 
-        for (Ship ship : VSGameUtilsKt.getShipsIntersecting(level, reach)) {
-            AABB shipBox = transformBoxWorldToShip(ship, reach);
+        // loaded ships only: an unloaded ship's shipyard chunks hold no blocks to collide with
+        for (Ship ship : VsTyped.intersecting(level, reach)) {
+            AABB shipBox = VsTyped.worldBoxToShip(ship, reach);
             if (cellCount(shipBox) > LARGE_REACH_CELLS) {
                 // A body much larger than the ship's blocks (a full-size
                 // player on a 1/16-scale ship): the reach spans ~50 shipyard
@@ -624,7 +629,75 @@ public final class CapsuleCollider {
             }
         }
 
+        if (mover != null) {
+            collectEntities(mover, level, reach, start, up, radius, height, out);
+        }
+
         return out;
+    }
+
+    // every face of an entity box is walkable surface: nothing is buried against it
+    private static final int ALL_FACES_EXPOSED = 0b111111;
+
+    /**
+     * HARD-COLLISION ENTITIES: boats, minecarts, shulkers, Vanilla Backport's
+     * happy ghast (solid while ridden or holding still), modded platforms.
+     * Replacing vanilla's collide dropped them, so under a rotated or radial
+     * frame everything fell straight through the things it stands on at
+     * plain gravity.
+     *
+     * <p>Gathered through {@code Level.getEntityCollisions}, the query
+     * vanilla's own collide makes, so the rules are vanilla's exactly: the
+     * other entity must answer {@code canBeCollidedWith} (or, for a boat or
+     * minecart moving, be pushable: {@code Boat.canVehicleCollide}),
+     * spectators never count, and nothing in the mover's own vehicle stack
+     * is an obstacle ({@code isPassengerOfSameVehicle}: same root vehicle),
+     * so a boat is never shoved by its own passengers nor a rider by its
+     * boat. The boxes are world space (Valkyrien Skies keeps entities in
+     * the world), so they join as plain world obstacles.
+     *
+     * <p>A box the capsule already sits DEEP inside when the move starts is
+     * left out, the way vanilla's swept collision ignores a shape it already
+     * overlaps. The pushout that is right for a block would throw the body
+     * clear of an entity that became solid around it in one tick (a happy
+     * ghast turns collidable the moment someone lands on it; a boat can be
+     * placed on a mob). A resting contact is never that deep: the collider
+     * rests within {@link #SKIN} of a face, and a platform closing in by its
+     * own motion moves hundredths of a block per tick.
+     */
+    private static void collectEntities(
+        Entity mover, Level level, AABB reach, Vec3 start, Vec3 up, double radius, double height, List<Obstacle> out
+    ) {
+        List<VoxelShape> shapes = level.getEntityCollisions(mover, reach);
+        if (shapes.isEmpty()) {
+            return;
+        }
+        double[] offsets = sphereOffsets(height, radius);
+        double embedded = Math.max(radius * 0.5, 0.05);
+        for (VoxelShape shape : shapes) {
+            for (AABB box : shape.toAabbs()) {
+                if (penetrationAt(start, up, offsets, radius, box) > embedded) {
+                    continue;
+                }
+                out.add(new Obstacle(box, null, ALL_FACES_EXPOSED, 1.0));
+            }
+        }
+    }
+
+    /** Deepest penetration of the capsule standing at {@code feet} into {@code box}; infinite with a centre inside. */
+    private static double penetrationAt(Vec3 feet, Vec3 up, double[] offsets, double radius, AABB box) {
+        double deepest = 0.0;
+        for (double offset : offsets) {
+            Vec3 c = feet.add(up.scale(offset));
+            if (box.contains(c)) {
+                return Double.POSITIVE_INFINITY;
+            }
+            double dx = c.x - Mth.clamp(c.x, box.minX, box.maxX);
+            double dy = c.y - Mth.clamp(c.y, box.minY, box.maxY);
+            double dz = c.z - Mth.clamp(c.z, box.minZ, box.maxZ);
+            deepest = Math.max(deepest, radius - Math.sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        return deepest;
     }
 
     private static long cellCount(AABB box) {
@@ -659,7 +732,7 @@ public final class CapsuleCollider {
             for (double offset : offsets) {
                 Vector3d c = new Vector3d(
                     base.x + up.x * offset, base.y + up.y * offset, base.z + up.z * offset);
-                ship.getTransform().getWorldToShipMatrix().transformPosition(c);
+                ship.getTransform().getWorldToShip().transformPosition(c);
                 int minX = Mth.floor(c.x - gather), maxX = Mth.floor(c.x + gather);
                 int minY = Mth.floor(c.y - gather), maxY = Mth.floor(c.y + gather);
                 int minZ = Mth.floor(c.z - gather), maxZ = Mth.floor(c.z + gather);
@@ -773,29 +846,9 @@ public final class CapsuleCollider {
         }
     }
 
-    private static AABB transformBoxWorldToShip(Ship ship, AABB box) {
-        Vector3d[] corners = new Vector3d[]{
-            new Vector3d(box.minX, box.minY, box.minZ), new Vector3d(box.maxX, box.minY, box.minZ),
-            new Vector3d(box.minX, box.maxY, box.minZ), new Vector3d(box.maxX, box.maxY, box.minZ),
-            new Vector3d(box.minX, box.minY, box.maxZ), new Vector3d(box.maxX, box.minY, box.maxZ),
-            new Vector3d(box.minX, box.maxY, box.maxZ), new Vector3d(box.maxX, box.maxY, box.maxZ)
-        };
-        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
-        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
-        for (Vector3d corner : corners) {
-            ship.getTransform().getWorldToShipMatrix().transformPosition(corner);
-            minX = Math.min(minX, corner.x); minY = Math.min(minY, corner.y); minZ = Math.min(minZ, corner.z);
-            maxX = Math.max(maxX, corner.x); maxY = Math.max(maxY, corner.y); maxZ = Math.max(maxZ, corner.z);
-        }
-        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
-    }
-
-    /** Velocity of a ship's surface at a world position (linear + angular). */
+    /** Velocity of a ship's surface at a world position (linear + angular), m/s. */
     public static Vec3 shipSurfaceVelocity(Ship ship, Vec3 worldPos) {
-        Vector3d r = new Vector3d(worldPos.x, worldPos.y, worldPos.z)
-            .sub(ship.getTransform().getPositionInWorld());
-        Vector3d vel = new Vector3d(ship.getOmega()).cross(r).add(ship.getVelocity());
-        return new Vec3(vel.x, vel.y, vel.z);
+        return VsTyped.velocityAt(ship, worldPos);
     }
 
     private CapsuleCollider() {}

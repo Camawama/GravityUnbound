@@ -2,7 +2,7 @@ package net.camacraft.gravityunbound.client;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
-import net.camacraft.gravityunbound.sticky.Rotation24;
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.util.GravityFieldLookup;
 
 import net.minecraft.client.renderer.LevelRenderer;
@@ -788,11 +788,39 @@ public final class GravityLiquidRenderer {
     private static int getLightColor(BlockAndTintGetter level, BlockPos pos, Direction gridUp) {
         int here = LevelRenderer.getLightColor(level, pos);
         int above = LevelRenderer.getLightColor(level, pos.relative(gridUp));
-        int blockHere = here & 255;
-        int blockAbove = above & 255;
-        int skyHere = here >> 16 & 255;
-        int skyAbove = above >> 16 & 255;
-        return Math.max(blockHere, blockAbove) | Math.max(skyHere, skyAbove) << 16;
+        return maxPackedLight(here, above);
+    }
+
+    /**
+     * Max of two packed light values that also understands Colorful
+     * Lighting's COLORED format (bits 0-7 red, 8-15 green, 16-19 sky, 20-27
+     * blue, top nibble 0xF — always a negative int). Vanilla's byte split
+     * turns a colored value into garbage, and CL only fixes vanilla's own
+     * getLightColor, which this port replaces for rotated cells. The colored
+     * rules are CL's {@code CLPackedLight.max} (pure int maths, documented
+     * as safe to copy), so no dependency on CL: two plain values combine
+     * exactly as vanilla does (bit-identical without CL installed), a
+     * colored value wins over a plain one, two colored values max per
+     * channel.
+     */
+    private static int maxPackedLight(int a, int b) {
+        boolean aColored = (a >>> 28) == 0xF;
+        boolean bColored = (b >>> 28) == 0xF;
+        if (!aColored && !bColored) {
+            int blockA = a & 255;
+            int blockB = b & 255;
+            int skyA = a >> 16 & 255;
+            int skyB = b >> 16 & 255;
+            return Math.max(blockA, blockB) | Math.max(skyA, skyB) << 16;
+        }
+        if (aColored != bColored) {
+            return aColored ? a : b;
+        }
+        int red = Math.max(a & 0xFF, b & 0xFF);
+        int green = Math.max(a >>> 8 & 0xFF, b >>> 8 & 0xFF);
+        int sky = Math.max(a >>> 16 & 0xF, b >>> 16 & 0xF);
+        int blue = Math.max(a >>> 20 & 0xFF, b >>> 20 & 0xFF);
+        return red | green << 8 | sky << 16 | blue << 20 | 0xF << 28;
     }
 
     private GravityLiquidRenderer() {}

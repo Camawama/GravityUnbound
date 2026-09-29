@@ -1,5 +1,6 @@
 package net.camacraft.gravityunbound.enchantment;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
 import net.camacraft.gravityunbound.init.GravityEnchantments;
 import net.camacraft.gravityunbound.network.GravityNetwork;
@@ -7,7 +8,6 @@ import net.camacraft.gravityunbound.network.SurfaceClingTargetPacket;
 import net.camacraft.gravityunbound.util.RotationUtil;
 import org.jetbrains.annotations.Nullable;
 import org.valkyrienskies.core.api.ships.Ship;
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
 
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -302,20 +302,19 @@ public class SurfaceClingEnchantment extends Enchantment {
     }
 
     private static @Nullable Ship findShip(LivingEntity living, long shipId) {
-        Object ship = VSGameUtilsKt.getShipObjectWorld(living.level()).getAllShips().getById(shipId);
-        return ship instanceof Ship found ? found : null;
+        return VsTyped.any(living.level(), shipId);
     }
 
     public static Vec3 shipToWorld(Ship ship, Vec3 localDir) {
         org.joml.Vector3d v = new org.joml.Vector3d(localDir.x, localDir.y, localDir.z);
-        ship.getTransform().getShipToWorldMatrix().transformDirection(v);
+        ship.getTransform().getShipToWorld().transformDirection(v);
         v.normalize();
         return new Vec3(v.x, v.y, v.z);
     }
 
     public static Vec3 worldToShip(Ship ship, Vec3 worldDir) {
         org.joml.Vector3d v = new org.joml.Vector3d(worldDir.x, worldDir.y, worldDir.z);
-        ship.getTransform().getWorldToShipMatrix().transformDirection(v);
+        ship.getTransform().getWorldToShip().transformDirection(v);
         v.normalize();
         return new Vec3(v.x, v.y, v.z);
     }

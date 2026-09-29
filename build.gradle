@@ -134,11 +134,24 @@ repositories {
     // 1. Maven Central MUST be top to fix the 'typetools' error
     mavenCentral()
 
+    // Camafy (the shared library mod) is published to the local Maven repository
+    mavenLocal {
+        content {
+            includeGroup "net.camacraft.camafy"
+        }
+    }
+
     maven { url = 'https://maven.minecraftforge.net' }
     maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
 
     // 2. Valkyrien Skies & Kotlin Repos
-    maven { url = 'https://maven.valkyrienskies.org' }
+    maven {
+        url = 'https://maven.valkyrienskies.org'
+        // VS's maven serves Kotlin for Forge's POM/.module but not its -all
+        // jar; Gradle takes the artifact from the repo that gave the metadata,
+        // so without this the KFF deobf fails ("Could not find kotlinforforge")
+        content { excludeGroup 'thedarkcolour' }
+    }
     maven { url = 'https://thedarkcolour.github.io/KotlinForForge/' }
 
     // Modrinth Maven for VS 2.4.0
@@ -160,9 +173,12 @@ repositories {
 dependencies {
     minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
 
-    implementation(jarJar("com.github.bawnorton.mixinsquared:mixinsquared-common:0.3.3")) {
-        jarJar.ranged(it, "[0.3.3,)")
-    }
+    // Compile and dev runs only: never nest mixinsquared-common. The nested mixinsquared-forge jar
+    // already carries it (as MixinSquared-<version>.jar), and every other mod bundles only
+    // mixinsquared-forge, so JarJar picks one of those. A separately nested common jar has an
+    // identity nobody else uses, loads next to the chosen one, and the game refuses to start:
+    // "Modules mixinsquared.common and MixinSquared... export package com.bawnorton.mixinsquared.util".
+    implementation "com.github.bawnorton.mixinsquared:mixinsquared-common:0.3.3"
     annotationProcessor "com.github.bawnorton.mixinsquared:mixinsquared-common:0.3.3"
     implementation(jarJar("com.github.bawnorton.mixinsquared:mixinsquared-forge:0.3.3")) {
         jarJar.ranged(it, "[0.3.3,)")
@@ -190,11 +206,24 @@ dependencies {
 
     implementation("org.joml:joml:1.10.5")
 
+    // Camafy: shared library mod (mandatory dependency, see mods.toml)
+    implementation fg.deobf("net.camacraft.camafy:camafy:${camafy_version}")
+
     // Explicitly add typetools to resolve the missing dependency error
     implementation "net.jodah:typetools:0.6.3"
 
     // runtimeOnly
     runtimeOnly fg.deobf("curse.maven:spark-361579:4738952")
+
+    // Vanilla Backport in dev runs, opt-in with -PvanillaBackport: puts
+    // Vanilla Backport (Forge 1.20.1 1.1.7.10) and its required Platform
+    // library (Forge 1.20.1 1.3.4) on the runtime classpath, so the
+    // compat.VanillaBackport* mixins apply and VanillaBackportGameTests
+    // registers its happy ghast tests. Never compiled against.
+    if (project.hasProperty('vanillaBackport')) {
+        runtimeOnly fg.deobf("maven.modrinth:vanillabackport:u8YPiN39")
+        runtimeOnly fg.deobf("maven.modrinth:i6fiqm5y:aWxR0Ksa")
+    }
 }
 
 tasks.named('processResources', ProcessResources).configure {
@@ -202,6 +231,7 @@ tasks.named('processResources', ProcessResources).configure {
             minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
             forge_version: forge_version, forge_version_range: forge_version_range,
             loader_version_range: loader_version_range,
+            camafy_version_range: camafy_version_range,
             mod_id: mod_id, mod_name: mod_name, mod_license: mod_license, mod_version: mod_version,
             mod_authors: mod_authors, mod_description: mod_description,
     ]

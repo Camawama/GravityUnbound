@@ -97,7 +97,7 @@ public abstract class EntityRenderDispatcherMixin {
     )
     private void inject_render_0(Entity entity, double x, double y, double z, float yaw, float tickDelta, PoseStack matrices, MultiBufferSource vertexConsumers, int light, CallbackInfo ci) {
         boolean pushed = false;
-        if (!net.camacraft.gravityunbound.client.GuiRenderState.renderingGuiEntity
+        if (!net.camacraft.camafy.client.render.GuiEntityRender.active()
             && !(entity instanceof Projectile) && !(entity instanceof ExperienceOrb) && EntityTags.allowGravityTransformationInRendering(entity)) {
             net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
                 GravityChangerAPI.getGravityComponentOrNull(entity);
@@ -135,7 +135,7 @@ public abstract class EntityRenderDispatcherMixin {
         )
     )
     private void inject_render_2(Entity entity, double x, double y, double z, float yaw, float tickDelta, PoseStack matrices, MultiBufferSource vertexConsumers, int light, CallbackInfo ci) {
-        if (!net.camacraft.gravityunbound.client.GuiRenderState.renderingGuiEntity
+        if (!net.camacraft.camafy.client.render.GuiEntityRender.active()
             && !(entity instanceof Projectile) && !(entity instanceof ExperienceOrb) && EntityTags.allowGravityTransformationInRendering(entity)) {
             net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
                 GravityChangerAPI.getGravityComponentOrNull(entity);
@@ -383,7 +383,7 @@ public abstract class EntityRenderDispatcherMixin {
         if (GravityChangerAPI.isGravityDefault(entity)) {
             return box;
         }
-        if (net.camacraft.gravityunbound.client.GuiRenderState.renderingGuiEntity) {
+        if (net.camacraft.camafy.client.render.GuiEntityRender.active()) {
             // the inventory paper doll is drawn upright and unrotated (the
             // gravity poses stand down in GUIs), but its stored world box is
             // the rotated envelope: draw the plain body box around the
@@ -425,7 +425,7 @@ public abstract class EntityRenderDispatcherMixin {
         Vec3 right;
         Vec3 forward;
         Quaternionf physicsRotation;
-        if (net.camacraft.gravityunbound.client.GuiRenderState.renderingGuiEntity) {
+        if (net.camacraft.camafy.client.render.GuiEntityRender.active()) {
             // the paper doll is drawn upright in its own frame (no gravity
             // pose): stack the spheres along the doll's own up, at the
             // doll's model scale
@@ -533,7 +533,7 @@ public abstract class EntityRenderDispatcherMixin {
         if (GravityChangerAPI.isGravityDefault(instance)) {
             return viewVector;
         }
-        if (net.camacraft.gravityunbound.client.GuiRenderState.renderingGuiEntity) {
+        if (net.camacraft.camafy.client.render.GuiEntityRender.active()) {
             // the doll's look line in the doll's own (unrotated) frame
             return RotationUtil.vecWorldToPlayer(viewVector, GravityChangerAPI.getAimRotation(instance));
         }

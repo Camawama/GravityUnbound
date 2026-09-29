@@ -6,6 +6,8 @@ import org.joml.Vector3f;
 
 import com.mojang.math.Axis;
 
+import net.camacraft.camafy.util.math.QuaternionUtil;
+
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.EntityDimensions;

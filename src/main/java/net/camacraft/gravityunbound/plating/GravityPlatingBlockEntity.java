@@ -6,6 +6,7 @@ import java.util.List;
 import org.apache.commons.lang3.Validate;
 import org.jetbrains.annotations.Nullable;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.EntityTags;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.api.RotationParameters;
@@ -16,7 +17,6 @@ import net.camacraft.gravityunbound.util.GCUtil;
 import net.camacraft.gravityunbound.util.RotationUtil;
 
 // VS2 imports (Valkyrien Skies is a mandatory dependency)
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
 import org.valkyrienskies.core.api.ships.Ship;
 import org.joml.Vector3d;
 
@@ -431,15 +431,25 @@ public class GravityPlatingBlockEntity extends BlockEntity
             return;
         }
 
+        boolean filledDefaults = false;
         for (Direction dir : Direction.values()) {
             if (GravityPlatingBlock.hasDir(blockState, dir)) {
                 if (sideData[dir.ordinal()] == null) {
                     sideData[dir.ordinal()] = SideData.createDefault();
+                    filledDefaults = true;
                 }
             }
             else {
                 sideData[dir.ordinal()] = null;
             }
+        }
+        // Defaults filled in here were never sent: a plate placed without its item (setBlock, a
+        // schematic, a structure) or copied into a ship's shipyard before its first tick had no
+        // data to send, and if its chunk reached a client first, that client's block entity waited
+        // for data forever (see dataInitialized) - the plate held nobody there, and its player
+        // floated or slid off while the server's copy worked. Send them.
+        if (filledDefaults && !world.isClientSide()) {
+            sync();
         }
 
         // stagger cache invalidation across plates; floorMod because hashCode may be negative
@@ -510,10 +520,10 @@ public class GravityPlatingBlockEntity extends BlockEntity
         AABB roughBox = be.getRoughEffectBox();
         AABB searchBox = roughBox;
 
-        Ship ship = VSGameUtilsKt.getShipManagingPos(world, blockPos);
+        Ship ship = VsTyped.managing(world, blockPos.getX(), blockPos.getY(), blockPos.getZ());
 
         if (ship != null) {
-            searchBox = gravityunbound$shipToWorldBox(ship, roughBox);
+            searchBox = VsTyped.shipBoxToWorld(ship, roughBox);
         }
         // ambient gravity for BLENDED sides (entities blend in world space,
         // fluids/particles in this grid — see downAt)
@@ -582,7 +592,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
                 Vec3 worldEffectDir = Vec3.atLowerCornerOf(localEffectDir.getNormal());
                 if (ship != null) {
                     Vector3d dirVec = new Vector3d(localEffectDir.getStepX(), localEffectDir.getStepY(), localEffectDir.getStepZ());
-                    ship.getTransform().getShipToWorldMatrix().transformDirection(dirVec);
+                    ship.getTransform().getShipToWorld().transformDirection(dirVec);
                     worldEffectDir = new Vec3(dirVec.x, dirVec.y, dirVec.z);
                 }
 
@@ -595,7 +605,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
 
                 if (ship != null) {
                     Vector3d posJoml = new Vector3d(testingPosWorld.x, testingPosWorld.y, testingPosWorld.z);
-                    ship.getTransform().getWorldToShipMatrix().transformPosition(posJoml);
+                    ship.getTransform().getWorldToShip().transformPosition(posJoml);
                     testingPos = new Vec3(posJoml.x, posJoml.y, posJoml.z);
                 } else {
                     testingPos = testingPosWorld;
@@ -685,6 +695,8 @@ public class GravityPlatingBlockEntity extends BlockEntity
             if (!applies || !primaryApplies) {
                 continue;
             }
+            // standing in a plate's own column: see GuGravityProvider.isAnchored
+            comp.lastPlatingFieldTick = gameTime;
 
             // velocity writes: only on the side that controls this entity
             boolean controlsEntity = world.isClientSide()
@@ -776,7 +788,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
         if (!anyFluidSide) {
             return;
         }
-        AABB worldBox = gravityunbound$shipToWorldBox(ship, gridBox);
+        AABB worldBox = VsTyped.shipBoxToWorld(ship, gridBox);
         AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
         lastShipWakeBox = worldBox;
         net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);
@@ -805,22 +817,20 @@ public class GravityPlatingBlockEntity extends BlockEntity
             return;
         }
 
-        for (Ship other : VSGameUtilsKt.getShipsIntersecting(serverLevel, searchBox)) {
+        // forces need the LOADED ship object: this queries the loaded ships
+        // themselves (on the server every one is a LoadedServerShip)
+        for (org.valkyrienskies.core.api.ships.LoadedShip other : VsTyped.intersecting(serverLevel, searchBox)) {
             if (ownShip != null && other.getId() == ownShip.getId()) {
                 continue;
             }
-            // the intersection query hands back ship DATA; forces need the
-            // LOADED ship object (null while the ship is unloaded)
-            org.valkyrienskies.core.api.ships.LoadedServerShip loaded =
-                VSGameUtilsKt.getShipObjectWorld(serverLevel).getLoadedShips().getById(other.getId());
-            if (loaded == null) {
+            if (!(other instanceof org.valkyrienskies.core.api.ships.LoadedServerShip loaded)) {
                 continue;
             }
             Vector3d centerWorld = new Vector3d(loaded.getTransform().getPositionInWorld());
             Vec3 testingPos = new Vec3(centerWorld.x, centerWorld.y, centerWorld.z);
             if (ownShip != null) {
                 Vector3d local = new Vector3d(centerWorld);
-                ownShip.getTransform().getWorldToShipMatrix().transformPosition(local);
+                ownShip.getTransform().getWorldToShip().transformPosition(local);
                 testingPos = new Vec3(local.x, local.y, local.z);
             }
 
@@ -843,7 +853,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
                 net.camacraft.gravityunbound.core.GravityCoreForceInducer inducer =
                     net.camacraft.gravityunbound.core.GravityCoreForceInducer.getOrCreate(loaded);
                 if (inducer == null) {
-                    return; // inducer unavailable (registration refused): leave ships alone
+                    return; // Camafy's ship force hook unavailable: leave ships alone
                 }
                 // describe the field in THIS plate's grid; the physics thread
                 // evaluates it against live transforms (reduced mass, reaction
@@ -1053,30 +1063,6 @@ public class GravityPlatingBlockEntity extends BlockEntity
         return new AABB(x1, y1, z1, x2, y2, z2);
     }
 
-    private static AABB gravityunbound$shipToWorldBox(Ship ship, AABB box) {
-        Vector3d[] corners = new Vector3d[] {
-                new Vector3d(box.minX, box.minY, box.minZ), new Vector3d(box.maxX, box.minY, box.minZ),
-                new Vector3d(box.minX, box.maxY, box.minZ), new Vector3d(box.maxX, box.maxY, box.minZ),
-                new Vector3d(box.minX, box.minY, box.maxZ), new Vector3d(box.maxX, box.minY, box.maxZ),
-                new Vector3d(box.minX, box.maxY, box.maxZ), new Vector3d(box.maxX, box.maxY, box.maxZ)
-        };
-
-        double wMinX = Double.MAX_VALUE, wMinY = Double.MAX_VALUE, wMinZ = Double.MAX_VALUE;
-        double wMaxX = -Double.MAX_VALUE, wMaxY = -Double.MAX_VALUE, wMaxZ = -Double.MAX_VALUE;
-
-        for (Vector3d corner : corners) {
-            ship.getTransform().getShipToWorldMatrix().transformPosition(corner);
-            if (corner.x < wMinX) wMinX = corner.x;
-            if (corner.y < wMinY) wMinY = corner.y;
-            if (corner.z < wMinZ) wMinZ = corner.z;
-            if (corner.x > wMaxX) wMaxX = corner.x;
-            if (corner.y > wMaxY) wMaxY = corner.y;
-            if (corner.z > wMaxZ) wMaxZ = corner.z;
-        }
-
-        return new AABB(wMinX, wMinY, wMinZ, wMaxX, wMaxY, wMaxZ);
-    }
-
     /**
      * In configured zero-g dimensions the field also accelerates NON-LIVING
      * entities (items, minecarts, TNT — their hardcoded gravity paths are the
@@ -1112,7 +1098,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
                 localEffectDir.getStepZ()
         );
         if (ship != null) {
-            ship.getTransform().getShipToWorldMatrix().transformDirection(accel);
+            ship.getTransform().getShipToWorld().transformDirection(accel);
             // a scaled ship's matrix scales direction lengths by the ship
             // scale — the ACCELERATION must not shrink or grow with it
             accel.normalize();
@@ -1166,7 +1152,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
 
         // plate normal in world space
         Vector3d normal = new Vector3d(plateDir.getStepX(), plateDir.getStepY(), plateDir.getStepZ());
-        ship.getTransform().getShipToWorldMatrix().transformDirection(normal);
+        ship.getTransform().getShipToWorld().transformDirection(normal);
         normal.normalize();
 
         double normalComponent = vel.dot(normal);
@@ -1192,7 +1178,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
         Vec3 entityPosLocal;
         if (ship != null) {
             Vector3d posJoml = new Vector3d(entity.getX(), entity.getY(), entity.getZ());
-            ship.getTransform().getWorldToShipMatrix().transformPosition(posJoml);
+            ship.getTransform().getWorldToShip().transformPosition(posJoml);
             entityPosLocal = new Vec3(posJoml.x, posJoml.y, posJoml.z);
         } else {
             entityPosLocal = entity.position();
@@ -1205,7 +1191,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
         Vec3 entityGravityVecLocal = Vec3.atLowerCornerOf(entityGravityDir.getNormal());
         if (ship != null) {
             Vector3d g = new Vector3d(entityGravityVecLocal.x, entityGravityVecLocal.y, entityGravityVecLocal.z);
-            ship.getTransform().getWorldToShipMatrix().transformDirection(g);
+            ship.getTransform().getWorldToShip().transformDirection(g);
             g.normalize();
             entityGravityVecLocal = new Vec3(g.x, g.y, g.z);
         }
@@ -1236,7 +1222,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
                 // compare velocity to the plate direction in ship-local space
                 if (ship != null) {
                     Vector3d velJoml = new Vector3d(worldVelocity.x, worldVelocity.y, worldVelocity.z);
-                    ship.getTransform().getWorldToShipMatrix().transformDirection(velJoml);
+                    ship.getTransform().getWorldToShip().transformDirection(velJoml);
                     worldVelocity = new Vec3(velJoml.x, velJoml.y, velJoml.z);
                 }
 
@@ -1257,7 +1243,7 @@ public class GravityPlatingBlockEntity extends BlockEntity
 
                     if (ship != null) {
                         Vector3d deltaJoml = new Vector3d(deltaWorldVelocity.x, deltaWorldVelocity.y, deltaWorldVelocity.z);
-                        ship.getTransform().getShipToWorldMatrix().transformDirection(deltaJoml);
+                        ship.getTransform().getShipToWorld().transformDirection(deltaJoml);
                         deltaWorldVelocity = new Vec3(deltaJoml.x, deltaJoml.y, deltaJoml.z);
                     }
 

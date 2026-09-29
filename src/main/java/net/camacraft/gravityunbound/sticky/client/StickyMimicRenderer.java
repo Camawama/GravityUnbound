@@ -2,7 +2,7 @@ package net.camacraft.gravityunbound.sticky.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 
-import net.camacraft.gravityunbound.sticky.Rotation24;
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.sticky.StickyMimicBlockEntity;
 
 import net.minecraft.client.Minecraft;

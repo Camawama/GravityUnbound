@@ -2,6 +2,7 @@ package net.camacraft.gravityunbound;
 
 import net.camacraft.gravityunbound.api.RotationParameters;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilities;
+import net.camacraft.gravityunbound.compat.GuGravityProvider;
 import net.camacraft.gravityunbound.event.RegisterArgumentTypes;
 import net.camacraft.gravityunbound.config.GravityConfig;
 import net.camacraft.gravityunbound.init.GravityBlocks;
@@ -40,6 +41,10 @@ public class GravityAPI
 
 		GravityNetwork.registerMessages();
 		MinecraftForge.EVENT_BUS.addGenericListener(Entity.class, GravityCapabilities::attachEntityCapability);
+
+		// answer Camafy's gravity questions, so mods that read gravity through
+		// Camafy (Full Stop, WallJump, MKW) see this mod's frames without naming it
+		net.camacraft.camafy.compat.gravity.Gravity.registerProvider(new GuGravityProvider());
 		// SERVER type, not COMMON: these values feed gravity computation that
 		// runs on BOTH sides (the local player computes its own gravity from
 		// fields client-side) — COMMON configs are never synced, so any
@@ -56,8 +61,8 @@ public class GravityAPI
 			e.enqueueWork(() ->
 			{
 				net.camacraft.gravityunbound.compat.AdAstraCompat.initIfLoaded();
-				// ship force inducer: attachment registration + attach-on-load
-				net.camacraft.gravityunbound.core.GravityCoreForceInducer.registerWithValkyrienSkies();
+				// ship field forces: a physics hook on Camafy's shared ship force attachment
+				net.camacraft.gravityunbound.core.GravityCoreForceInducer.registerPhysicsHook();
 				// plating collides with ships as its panels, not as a cube or nothing
 				net.camacraft.gravityunbound.util.ShipBlockShapes.register();
 			}));

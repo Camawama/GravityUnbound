@@ -9,7 +9,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
+import net.camacraft.camafy.compat.vs.Ships;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -89,17 +89,13 @@ public abstract class ServerPlayerGameModeMixin {
         if (!(this.level.getBlockState(pos).getBlock() instanceof GravityPlatingBlock)) {
             return false;
         }
-        if (VSGameUtilsKt.getShipManagingPos(this.level, pos) == null) {
+        if (!Ships.inShipyard(this.level, pos)) {
             return false;
         }
 
         Vec3 eye = this.player.getEyePosition();
         double maxDistance = this.player.getBlockReach() + padding + GRAVITYAPIVS$SHIP_REACH_SLACK;
-        double distSq = VSGameUtilsKt.squaredDistanceBetweenInclShips(
-            this.level,
-            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
-            eye.x, eye.y, eye.z
-        );
+        double distSq = Ships.distanceSqr(this.level, Vec3.atCenterOf(pos), eye);
         return distSq < maxDistance * maxDistance;
     }
 }

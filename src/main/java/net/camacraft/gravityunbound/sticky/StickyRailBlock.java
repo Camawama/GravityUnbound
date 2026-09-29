@@ -2,6 +2,8 @@ package net.camacraft.gravityunbound.sticky;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.camacraft.camafy.util.math.Rotation24;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
@@ -169,7 +171,7 @@ public class StickyRailBlock extends BaseRailBlock implements EntityBlock {
         // opposite. Spin from the placer's look. MUST stay inside
         // getStateForPlacement (the only spot Valkyrien Skies wraps with its
         // temporary ship-grid player transform).
-        Rotation24.Orientation orientation = Rotation24.fromClickedFace(
+        Rotation24.Orientation orientation = Rotation24Placement.fromClickedFace(
             context.getPlayer(), context.getLevel(), context.getClickedPos(), context.getClickedFace()
         );
         FluidState fluid = context.getLevel().getFluidState(context.getClickedPos());

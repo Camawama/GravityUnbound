@@ -3,12 +3,13 @@ package net.camacraft.gravityunbound.client;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4d;
 import org.joml.Matrix4f;
-import org.valkyrienskies.core.api.ships.ClientShip;
 import org.valkyrienskies.core.api.ships.Ship;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
+import net.camacraft.camafy.compat.vs.ShipRef;
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.GravityAPI;
 import net.camacraft.gravityunbound.util.FieldVisuals;
 
@@ -249,16 +250,10 @@ public final class FieldVisualsRenderer {
         }
         org.joml.Vector3d v = new org.joml.Vector3d(pos.x, pos.y, pos.z);
         if (from != null) {
-            (from instanceof ClientShip clientShip
-                ? clientShip.getRenderTransform().getShipToWorld()
-                : from.getTransform().getShipToWorld()
-            ).transformPosition(v);
+            VsTyped.toWorld(VsTyped.transform(from, ShipRef.Pose.RENDER), v);
         }
         if (to != null) {
-            (to instanceof ClientShip clientShip
-                ? clientShip.getRenderTransform().getWorldToShip()
-                : to.getTransform().getWorldToShip()
-            ).transformPosition(v);
+            VsTyped.toShip(VsTyped.transform(to, ShipRef.Pose.RENDER), v);
         }
         return new Vec3(v.x, v.y, v.z);
     }
@@ -279,9 +274,7 @@ public final class FieldVisualsRenderer {
 
         Matrix4d m = new Matrix4d()
             .translate(-cam.x, -cam.y, -cam.z)
-            .mul(ship instanceof ClientShip clientShip
-                ? clientShip.getRenderTransform().getShipToWorld()
-                : ship.getTransform().getShipToWorld())
+            .mul(VsTyped.transform(ship, ShipRef.Pose.RENDER).getShipToWorld())
             .translate(origin.x, origin.y, origin.z);
         poseStack.mulPoseMatrix(new Matrix4f(
             (float) m.m00(), (float) m.m01(), (float) m.m02(), (float) m.m03(),

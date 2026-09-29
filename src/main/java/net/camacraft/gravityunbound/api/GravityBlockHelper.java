@@ -1,5 +1,6 @@
 package net.camacraft.gravityunbound.api;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.util.RotationUtil;
 
 import net.minecraft.core.Direction;
@@ -105,13 +106,12 @@ public final class GravityBlockHelper {
      * Valkyrien Skies ship, unchanged otherwise.
      */
     public static Vec3 worldDirectionToGrid(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos, Vec3 worldDir) {
-        org.valkyrienskies.core.api.ships.Ship ship =
-            org.valkyrienskies.mod.common.VSGameUtilsKt.getShipManagingPos(level, pos);
+        org.valkyrienskies.core.api.ships.Ship ship = VsTyped.managing(level, pos.getX(), pos.getY(), pos.getZ());
         if (ship == null) {
             return worldDir;
         }
         org.joml.Vector3d v = new org.joml.Vector3d(worldDir.x, worldDir.y, worldDir.z);
-        ship.getTransform().getWorldToShipMatrix().transformDirection(v);
+        ship.getTransform().getWorldToShip().transformDirection(v);
         v.normalize();
         return new Vec3(v.x, v.y, v.z);
     }
@@ -138,16 +138,15 @@ public final class GravityBlockHelper {
      * fields already ship-grid look angles ({@code PlayerUtil
      * .transformPlayerTemporarily}). Do NOT run the placer's position or a
      * look-derived vector through this transform there — it double-rotates.
-     * See {@code Rotation24.fromPlacement} for the correct pattern.
+     * See {@code Rotation24Placement.fromPlacement} for the correct pattern.
      */
     public static Vec3 worldPositionToGrid(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos, Vec3 worldPos) {
-        org.valkyrienskies.core.api.ships.Ship ship =
-            org.valkyrienskies.mod.common.VSGameUtilsKt.getShipManagingPos(level, pos);
+        org.valkyrienskies.core.api.ships.Ship ship = VsTyped.managing(level, pos.getX(), pos.getY(), pos.getZ());
         if (ship == null) {
             return worldPos;
         }
         org.joml.Vector3d v = new org.joml.Vector3d(worldPos.x, worldPos.y, worldPos.z);
-        ship.getTransform().getWorldToShipMatrix().transformPosition(v);
+        ship.getTransform().getWorldToShip().transformPosition(v);
         return new Vec3(v.x, v.y, v.z);
     }
 

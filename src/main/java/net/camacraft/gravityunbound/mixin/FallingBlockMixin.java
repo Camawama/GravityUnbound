@@ -64,7 +64,9 @@ public abstract class FallingBlockMixin extends Entity {
         index = 1
     )
     private double multiplyGravity(double x) {
-        return x * GravityChangerAPI.getGravityStrength(this);
+        // Camafy's real local gravity: Ad Astra corrects items, carts and TNT itself but not
+        // falling blocks, which otherwise fell at Earth's rate on its planets and in orbit
+        return x * net.camacraft.camafy.compat.gravity.Gravity.strength(this);
     }
 
     // PrimedTnt/FallingBlockEntity override tick() WITHOUT calling

@@ -4,10 +4,12 @@ import java.util.List;
 
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
+import org.valkyrienskies.core.api.ships.LoadedServerShip;
+import org.valkyrienskies.core.api.ships.LoadedShip;
 import org.valkyrienskies.core.api.ships.ServerShip;
 import org.valkyrienskies.core.api.ships.Ship;
-import org.valkyrienskies.mod.common.VSGameUtilsKt;
 
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
 import net.camacraft.gravityunbound.EntityTags;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.api.RotationParameters;
@@ -143,7 +145,7 @@ public class GravityCoreBlockEntity extends BlockEntity
             return;
         }
 
-        Ship ownShip = VSGameUtilsKt.getShipManagingPos(world, blockPos);
+        Ship ownShip = VsTyped.managing(world, blockPos.getX(), blockPos.getY(), blockPos.getZ());
         be.ambientInGrid = be.replacesGravity ? Vec3.ZERO
             : net.camacraft.gravityunbound.util.WorldGravity.toGrid(
                 net.camacraft.gravityunbound.util.WorldGravity.ambient(world), ownShip);
@@ -152,7 +154,7 @@ public class GravityCoreBlockEntity extends BlockEntity
         Vec3 center = Vec3.atCenterOf(blockPos);
         if (ownShip != null) {
             Vector3d c = new Vector3d(center.x, center.y, center.z);
-            ownShip.getTransform().getShipToWorldMatrix().transformPosition(c);
+            ownShip.getTransform().getShipToWorld().transformPosition(c);
             center = new Vec3(c.x, c.y, c.z);
         }
 
@@ -171,7 +173,7 @@ public class GravityCoreBlockEntity extends BlockEntity
         double shipScale = 1.0;
         if (ownShip != null) {
             Vector3d unit = new Vector3d(1.0, 0.0, 0.0);
-            ownShip.getTransform().getShipToWorldMatrix().transformDirection(unit);
+            ownShip.getTransform().getShipToWorld().transformDirection(unit);
             double len = unit.length();
             if (len > 1.0E-9) {
                 shipScale = len;
@@ -227,20 +229,7 @@ public class GravityCoreBlockEntity extends BlockEntity
         AABB gridBox = new AABB(
             gridCenter.x - range, gridCenter.y - range, gridCenter.z - range,
             gridCenter.x + range, gridCenter.y + range, gridCenter.z + range);
-        Vector3d[] corners = {
-            new Vector3d(gridBox.minX, gridBox.minY, gridBox.minZ), new Vector3d(gridBox.maxX, gridBox.minY, gridBox.minZ),
-            new Vector3d(gridBox.minX, gridBox.maxY, gridBox.minZ), new Vector3d(gridBox.maxX, gridBox.maxY, gridBox.minZ),
-            new Vector3d(gridBox.minX, gridBox.minY, gridBox.maxZ), new Vector3d(gridBox.maxX, gridBox.minY, gridBox.maxZ),
-            new Vector3d(gridBox.minX, gridBox.maxY, gridBox.maxZ), new Vector3d(gridBox.maxX, gridBox.maxY, gridBox.maxZ)
-        };
-        double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE, minZ = Double.MAX_VALUE;
-        double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
-        for (Vector3d corner : corners) {
-            ownShip.getTransform().getShipToWorldMatrix().transformPosition(corner);
-            minX = Math.min(minX, corner.x); minY = Math.min(minY, corner.y); minZ = Math.min(minZ, corner.z);
-            maxX = Math.max(maxX, corner.x); maxY = Math.max(maxY, corner.y); maxZ = Math.max(maxZ, corner.z);
-        }
-        AABB worldBox = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
+        AABB worldBox = VsTyped.shipBoxToWorld(ownShip, gridBox);
         AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
         lastShipWakeBox = worldBox;
         net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);
@@ -384,7 +373,7 @@ public class GravityCoreBlockEntity extends BlockEntity
 
             Vec3 shipLocalDir = null;
             Vec3 shipLocalPos = null;
-            Ship anchorShip = VSGameUtilsKt.getShipManagingPos(world, worldPosition);
+            Ship anchorShip = VsTyped.managing(world, worldPosition.getX(), worldPosition.getY(), worldPosition.getZ());
             if (anchorShip != null) {
                 // a blended direction is no longer the pure radial the
                 // position anchor re-derives: anchor its rotation instead
@@ -449,19 +438,17 @@ public class GravityCoreBlockEntity extends BlockEntity
             return;
         }
 
-        for (Ship ship : VSGameUtilsKt.getShipsIntersecting(serverLevel, searchBox)) {
+        // Forces need the LOADED ship: this queries the loaded ships
+        // themselves (on the server every one is a LoadedServerShip). An
+        // intersection query over ALL ships answers with ship DATA objects,
+        // which never are the loaded ship — an instanceof test on those once
+        // filtered every ship out, which is why "affects ships" never did
+        // anything.
+        for (LoadedShip ship : VsTyped.intersecting(serverLevel, searchBox)) {
             if (ownShip != null && ship.getId() == ownShip.getId()) {
                 continue;
             }
-            // The intersection query answers with ship DATA objects, which
-            // never are the LOADED ship (the old instanceof test on them
-            // filtered every ship out — this is why "affects ships" never
-            // did anything). Forces need the loaded ship, looked up by id;
-            // null while the ship is unloaded, and attachment access on an
-            // unloaded ship would throw.
-            org.valkyrienskies.core.api.ships.LoadedServerShip serverShip =
-                VSGameUtilsKt.getShipObjectWorld(serverLevel).getLoadedShips().getById(ship.getId());
-            if (serverShip == null) {
+            if (!(ship instanceof LoadedServerShip serverShip)) {
                 continue;
             }
 
@@ -474,7 +461,7 @@ public class GravityCoreBlockEntity extends BlockEntity
 
             GravityCoreForceInducer inducer = GravityCoreForceInducer.getOrCreate(serverShip);
             if (inducer == null) {
-                return; // inducer unavailable (registration refused): leave ships alone
+                return; // Camafy's ship force hook unavailable: leave ships alone
             }
             // ~1 g in m/s^2, scaled by the core's own acceleration setting;
             // the force itself (reduced mass, live direction, reaction on the

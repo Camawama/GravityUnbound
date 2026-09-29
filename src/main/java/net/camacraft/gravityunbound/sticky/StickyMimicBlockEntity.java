@@ -2,6 +2,7 @@ package net.camacraft.gravityunbound.sticky;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.init.GravityBlocks;
 
 import net.minecraft.core.BlockPos;

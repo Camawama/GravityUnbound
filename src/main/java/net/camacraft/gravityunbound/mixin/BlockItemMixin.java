@@ -24,8 +24,8 @@ public abstract class BlockItemMixin {
         )
     )
     private BlockState gravityunbound$shipPlacementWindow(Block block, BlockPlaceContext context, Operation<BlockState> original) {
-        boolean onShip = org.valkyrienskies.mod.common.VSGameUtilsKt.getShipManagingPos(
-            context.getLevel(), context.getClickedPos()) != null;
+        boolean onShip = net.camacraft.camafy.compat.vs.Ships.inShipyard(
+            context.getLevel(), context.getClickedPos());
         if (!onShip) {
             return original.call(block, context);
         }

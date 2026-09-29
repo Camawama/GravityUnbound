@@ -477,7 +477,9 @@ public abstract class AbstractMinecartMixin extends Entity {
         );
         double alongTrack = (gravityRail.x * d4 + gravityRail.y * chordY + gravityRail.z * d5) / chordLen;
         double horizFrac = d6 / chordLen;
-        double thrust = slopeAdjustment * GravityChangerAPI.getGravityStrength(self) * alongTrack / horizFrac;
+        // the downhill pull at the real local gravity (Camafy): Ad Astra corrects a cart's fall,
+        // not this, and VS Genesis's space has none, where vanilla's slope thrust still ran
+        double thrust = slopeAdjustment * net.camacraft.camafy.compat.gravity.Gravity.strength(self) * alongTrack / horizFrac;
         vec31 = vec31.add(thrust * d4 / d6, 0.0, thrust * d5 / d6);
 
         // redirect the horizontal velocity along the track chord (vanilla)

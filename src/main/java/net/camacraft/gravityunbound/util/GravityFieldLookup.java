@@ -397,16 +397,16 @@ public final class GravityFieldLookup {
         net.minecraft.world.phys.AABB probe = new net.minecraft.world.phys.AABB(
             cx - reach, cy - reach, cz - reach, cx + reach, cy + reach, cz + reach);
         for (org.valkyrienskies.core.api.ships.Ship ship
-            : org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(level, probe)) {
+            : net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(level, probe)) {
             org.joml.Vector3d local = new org.joml.Vector3d(cx, cy, cz);
-            ship.getTransform().getWorldToShipMatrix().transformPosition(local);
+            ship.getTransform().getWorldToShip().transformPosition(local);
             Best onShip = computeBestFieldAt(level, index, BlockPos.containing(local.x, local.y, local.z), kind);
             if (onShip == null) {
                 continue;
             }
             org.joml.Vector3d dir = new org.joml.Vector3d(
                 onShip.down().getStepX(), onShip.down().getStepY(), onShip.down().getStepZ());
-            ship.getTransform().getShipToWorldMatrix().transformDirection(dir);
+            ship.getTransform().getShipToWorld().transformDirection(dir);
             if (dir.lengthSquared() < 1.0E-12) {
                 continue;
             }
@@ -504,9 +504,9 @@ public final class GravityFieldLookup {
             worldPos.x - reach, worldPos.y - reach, worldPos.z - reach,
             worldPos.x + reach, worldPos.y + reach, worldPos.z + reach);
         for (org.valkyrienskies.core.api.ships.Ship ship
-            : org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(level, probe)) {
+            : net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(level, probe)) {
             org.joml.Vector3d local = new org.joml.Vector3d(worldPos.x, worldPos.y, worldPos.z);
-            ship.getTransform().getWorldToShipMatrix().transformPosition(local);
+            ship.getTransform().getWorldToShip().transformPosition(local);
             if (anySourceInRange(level, index, BlockPos.containing(local.x, local.y, local.z))) {
                 return true;
             }
@@ -601,9 +601,9 @@ public final class GravityFieldLookup {
         net.minecraft.world.phys.AABB probe = new net.minecraft.world.phys.AABB(
             x - reach, y - reach, z - reach, x + reach, y + reach, z + reach);
         for (org.valkyrienskies.core.api.ships.Ship ship
-            : org.valkyrienskies.mod.common.VSGameUtilsKt.getShipsIntersecting(level, probe)) {
+            : net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(level, probe)) {
             org.joml.Vector3d local = new org.joml.Vector3d(x, y, z);
-            ship.getTransform().getWorldToShipMatrix().transformPosition(local);
+            ship.getTransform().getWorldToShip().transformPosition(local);
             Best onShip = computeBestFieldAt(level, index, BlockPos.containing(local.x, local.y, local.z), Kind.PARTICLE);
             if (onShip == null) {
                 continue;

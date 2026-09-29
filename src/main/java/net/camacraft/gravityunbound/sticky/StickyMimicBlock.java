@@ -4,6 +4,7 @@ import java.util.function.Consumer;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.camacraft.camafy.util.math.Rotation24;
 import net.camacraft.gravityunbound.init.GravityItems;
 import net.camacraft.gravityunbound.sticky.client.StickyMimicClientExtensions;
 
@@ -64,7 +65,7 @@ import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
  * target the rotated silhouette. Placed with the creative-only Sticky Caster
  * ({@link StickyCasterItem}).
  *
- * <p>Orientation comes from the CLICKED FACE ({@link Rotation24#fromClickedFace}):
+ * <p>Orientation comes from the CLICKED FACE ({@link Rotation24Placement#fromClickedFace}):
  * the mimic's local down points into the surface that was clicked, so
  * surface-attached captures (redstone dust, carpets, rails, ...) lie flat on
  * whatever surface the placer clicks — the placer's gravity frame is only
@@ -124,7 +125,7 @@ public class StickyMimicBlock extends BaseEntityBlock {
         // the orientation helpers see ship-grid look angles (and a ship-grid
         // clicked face) on ships. Deriving the orientation anywhere else in
         // the placement flow double-rotates.
-        Rotation24.Orientation orientation = Rotation24.fromClickedFace(
+        Rotation24.Orientation orientation = Rotation24Placement.fromClickedFace(
             context.getPlayer(), context.getLevel(), context.getClickedPos(),
             context.getClickedFace()
         );

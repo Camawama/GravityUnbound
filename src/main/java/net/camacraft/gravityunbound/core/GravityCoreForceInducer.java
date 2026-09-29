@@ -2,30 +2,32 @@ package net.camacraft.gravityunbound.core;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.joml.Matrix3dc;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 import org.joml.primitives.AABBd;
 import org.joml.primitives.AABBdc;
 import org.valkyrienskies.core.api.ships.LoadedServerShip;
 import org.valkyrienskies.core.api.ships.PhysShip;
-import org.valkyrienskies.core.api.ships.ShipForcesInducer;
-import org.valkyrienskies.core.api.ships.ShipPhysicsListener;
 import org.valkyrienskies.core.api.ships.properties.ShipTransform;
 import org.valkyrienskies.core.api.world.PhysLevel;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-
+import net.camacraft.camafy.compat.vs.ShipForces;
+import net.camacraft.camafy.compat.vs.impl.VsTyped;
+import net.camacraft.gravityunbound.GravityAPI;
 import net.camacraft.gravityunbound.config.GravityConfig;
 
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.server.ServerLifecycleHooks;
 
 /**
- * Applies gravity-field forces (cores and plating) to a Valkyrien Skies ship.
+ * Gravity-field forces (cores and plating) on Valkyrien Skies ships: one
+ * instance per held ship, holding the fields that currently hold it.
  *
  * THE MODEL. A field sets a CLOSING ACCELERATION between the held ship and
  * the ship (or the world) carrying the field: the force is the field's
@@ -63,19 +65,20 @@ import net.minecraftforge.server.ServerLifecycleHooks;
  * the physics thread cancels exactly that — unless the field is set to
  * BLEND with world gravity, for fields meant to add to it.
  *
- * PHYSICS CALLBACK. The core API that Valkyrien Skies 2.4.11 bundles (core
- * 1.1.0+cf208d8b56 — see build.gradle) dispatches attachments through
- * {@link ShipPhysicsListener#physTick(PhysShip, PhysLevel)}; its
- * {@link ShipForcesInducer} is an empty marker. Newer core builds dispatch
- * through {@code ShipForcesInducer.applyForces(PhysShip)} instead (without
- * a level, so without other-ship lookups: world-mounted fields only). Both
- * entry points exist here; {@code applyForces} carries no {@code @Override}
- * because the pinned interface declares nothing to override.
+ * PHYSICS CALLBACK. Camafy's shared ship force hook, not an attachment of
+ * our own: every loaded server ship carries Camafy's single force
+ * attachment, which runs the registered physics hooks on the physics thread
+ * every physics step ({@link #registerPhysicsHook}). A second attachment
+ * of this mod's would compete with the other mods' for the same ships. The
+ * per-ship state lives in {@link #STATES}, keyed by ship id: created when a
+ * field first offers itself for a ship ({@link #getOrCreate}), retired by
+ * the physics thread once the hold has expired and nothing new is pending.
+ * A ship that unloads mid-hold leaves its state behind; lists older than
+ * {@link #STALE_GAME_TICKS} are never applied, so a reloaded ship starts
+ * clean exactly as a fresh attachment did, and the map is cleared when the
+ * server stops.
  */
-// FINAL is mandatory: VS 2.4.11 refuses to register a non-final attachment
-// class ("cannot be registered because it is not final"), and setAttachment
-// throws for unregistered classes.
-public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhysicsListener {
+public final class GravityCoreForceInducer {
 
     /** Source id of a field mounted in the world rather than on a ship. */
     public static final long WORLD = -1L;
@@ -122,94 +125,80 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
      *  removed / ship left every field) and the hold expires. */
     private static final int EXPIRY_PHYS_TICKS = 10;
 
+    /** A complete list older than this many game ticks when the physics
+     *  thread gets to it belongs to a ship that unloaded mid-hold and has
+     *  just come back: it is dropped, as a fresh attachment would have had
+     *  nothing. In normal running a list is one or two ticks old. */
+    private static final int STALE_GAME_TICKS = 20;
+
+    /** Camafy physics-hook key (the old attachment's key). */
+    private static final ResourceLocation HOOK_KEY = new ResourceLocation(GravityAPI.MODID, "field_force");
+
+    /** Per-ship state, keyed by ship id (read by the physics thread). */
+    private static final ConcurrentHashMap<Long, GravityCoreForceInducer> STATES = new ConcurrentHashMap<>();
+
+    private final long shipId;
+    // set (with `this` held) when the physics thread drops this state from
+    // STATES; an offer that finds it set goes to the ship's new state
+    private boolean retired = false;
+
     // in-progress list for the game tick stamped by buildingTick (guarded by `this`)
-    @JsonIgnore
     private List<FieldSource> building = null;
-    @JsonIgnore
     private int buildingTick = 0;
     // the gravity (m/s^2, world axes) acting on this ship as the game
     // thread determined it — dimension gravity, or another mod's per-ship
     // override — which a REPLACING field cancels
-    @JsonIgnore
     private Vector3d buildingGravity = null;
 
     // last COMPLETE game-tick list, not yet latched by the physics thread (guarded by `this`)
-    @JsonIgnore
     private List<FieldSource> completed = null;
-    @JsonIgnore
     private Vector3d completedGravity = null;
-    @JsonIgnore
+    private int completedTick = 0;
     private boolean completedFresh = false;
 
     // physics-thread state: the physics runs several ticks per game tick, so
     // the last known list keeps applying until the game thread stops refreshing it
-    @JsonIgnore
     private List<FieldSource> active = null;
-    @JsonIgnore
     private Vector3d activeGravity = null;
-    @JsonIgnore
     private int physTicksSinceUpdate = 0;
 
+    private GravityCoreForceInducer(long shipId) {
+        this.shipId = shipId;
+    }
+
     /**
-     * Only loaded ships may carry attachments — {@code ServerShip.getAttachment}
-     * THROWS for unloaded ships, which crashed the server the moment a core's
-     * range box swept up a distant ship. Nothing here needs persisting, so
-     * the transient {@code setAttachment} is also the right call.
+     * The state of a LOADED ship (only loaded ships are ever pulled: the
+     * physics thread only steps loaded ships, and fields look them up among
+     * the loaded ones). Null while Camafy's ship force hook is unavailable
+     * this session (Valkyrien Skies refused it, or it broke): fields then
+     * leave ships alone.
      */
     @Nullable
     public static GravityCoreForceInducer getOrCreate(LoadedServerShip ship) {
-        GravityCoreForceInducer inducer = ship.getAttachment(GravityCoreForceInducer.class);
-        if (inducer == null) {
-            if (!registered) {
-                // VS throws on setAttachment for an unregistered class —
-                // never let a field tick crash the server over it
-                if (!warnedUnregistered) {
-                    warnedUnregistered = true;
-                    LOGGER.warn("Gravity Unbound ship force inducer is not registered with Valkyrien Skies; "
-                        + "fields will not pull ships this session");
-                }
-                return null;
+        if (!ShipForces.available()) {
+            if (!warnedUnavailable) {
+                warnedUnavailable = true;
+                LOGGER.warn("Camafy's ship force hook is unavailable; "
+                    + "Gravity Unbound fields will not pull ships this session");
             }
-            inducer = new GravityCoreForceInducer();
-            ship.setAttachment(GravityCoreForceInducer.class, inducer);
+            return null;
         }
-        return inducer;
+        return STATES.computeIfAbsent(ship.getId(), GravityCoreForceInducer::new);
     }
 
     private static final org.slf4j.Logger LOGGER = com.mojang.logging.LogUtils.getLogger();
-    private static volatile boolean registered = false;
-    private static volatile boolean warnedUnregistered = false;
+    private static volatile boolean warnedUnavailable = false;
 
     /**
-     * Registers the attachment with Valkyrien Skies and attaches one idle
-     * inducer to every server ship AS IT LOADS — the pattern VS's own
-     * buoyancy handler (also a {@link ShipPhysicsListener}) uses. The
-     * physics ship's listener list is built from the ship's attachments,
-     * so being attached from the first physics frame never depends on a
-     * late attachment propagating to the physics thread. An idle inducer
-     * costs one null check per physics tick. Called once from common setup;
-     * {@link #getOrCreate} stays as the fallback for ships that loaded
-     * before registration (never, in practice).
+     * Registers the physics hook with Camafy, whose single attachment runs
+     * it for every loaded server ship on every physics step (an idle ship
+     * costs one map lookup), and forgets every ship's state when the server
+     * stops (ship ids and tick counts start over with the next world).
+     * Called once from common setup.
      */
-    public static void registerWithValkyrienSkies() {
-        try {
-            org.valkyrienskies.mod.api.VsApi api = org.valkyrienskies.mod.api.ValkyrienSkies.api();
-            api.registerAttachment(GravityCoreForceInducer.class, builder -> {
-                builder.key("gravityunbound:field_force");
-                builder.useTransientSerializer();
-                return kotlin.Unit.INSTANCE;
-            });
-            registered = true;
-            api.getShipLoadEvent().on(
-                (java.util.function.Consumer<org.valkyrienskies.core.api.events.ShipLoadEvent>)
-                    event -> getOrCreate(event.getShip()));
-        }
-        catch (Throwable t) {
-            // a VS build that rejects the registration: getOrCreate then
-            // answers null and fields leave ships alone instead of crashing
-            LOGGER.warn("Gravity Unbound could not register its ship force inducer with Valkyrien Skies; "
-                + "fields will not pull ships", t);
-        }
+    public static void registerPhysicsHook() {
+        VsTyped.registerPhysicsHook(HOOK_KEY, GravityCoreForceInducer::onPhysicsTick);
+        MinecraftForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> STATES.clear());
     }
 
     // ------------------------------------------------------------------
@@ -223,7 +212,19 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
      * counts per tick, or a deck would multiply its gravity by its plate
      * count. Every radial source (core) counts — each core is one source.
      */
-    public synchronized void offer(FieldSource source, Vector3dc gravityActingOnShip) {
+    public void offer(FieldSource source, Vector3dc gravityActingOnShip) {
+        GravityCoreForceInducer state = this;
+        // the physics thread may have retired this state since it was
+        // looked up: the offer then goes to the ship's new one
+        while (!state.offerIfLive(source, gravityActingOnShip)) {
+            state = STATES.computeIfAbsent(shipId, GravityCoreForceInducer::new);
+        }
+    }
+
+    private synchronized boolean offerIfLive(FieldSource source, Vector3dc gravityActingOnShip) {
+        if (retired) {
+            return false;
+        }
         promoteIfTickPassed();
         int tick = currentGameTick();
         if (building == null || buildingTick != tick) {
@@ -234,11 +235,12 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
         if (!source.radial()) {
             for (FieldSource existing : building) {
                 if (!existing.radial() && existing.sourceShipId() == source.sourceShipId()) {
-                    return;
+                    return true;
                 }
             }
         }
         building.add(source);
+        return true;
     }
 
     /**
@@ -250,6 +252,7 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
         if (building != null && buildingTick != currentGameTick()) {
             completed = building;
             completedGravity = buildingGravity;
+            completedTick = buildingTick;
             completedFresh = true;
             building = null;
             buildingGravity = null;
@@ -270,15 +273,15 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
     // physics thread
     // ------------------------------------------------------------------
 
-    /** VS 2.4.11 physics-thread entry point (see the class comment). */
-    @Override
-    public void physTick(@NotNull PhysShip physShip, @NotNull PhysLevel physLevel) {
-        applyForces(physShip, physLevel);
-    }
-
-    /** Newer-core physics-thread entry point (see the class comment). */
-    public void applyForces(@NotNull PhysShip physShip) {
-        applyForces(physShip, null);
+    /** Camafy physics hook: runs for every loaded server ship, every physics step. */
+    private static void onPhysicsTick(PhysShip physShip, PhysLevel physLevel, double dt) {
+        if (STATES.isEmpty()) {
+            return;
+        }
+        GravityCoreForceInducer state = STATES.get(physShip.getId());
+        if (state != null) {
+            state.applyForces(physShip, physLevel);
+        }
     }
 
     private void applyForces(PhysShip self, @Nullable PhysLevel physLevel) {
@@ -286,16 +289,27 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
         Vector3d gravityActing;
         synchronized (this) {
             promoteIfTickPassed();
+            boolean latched = false;
             if (completedFresh) {
-                active = completed;
-                activeGravity = completedGravity;
                 completedFresh = false;
-                physTicksSinceUpdate = 0;
+                int age = currentGameTick() - completedTick;
+                // (a stale list counts as a missed refresh, see STALE_GAME_TICKS)
+                if (age >= 0 && age <= STALE_GAME_TICKS) {
+                    active = completed;
+                    activeGravity = completedGravity;
+                    physTicksSinceUpdate = 0;
+                    latched = true;
+                }
             }
-            else if (++physTicksSinceUpdate > EXPIRY_PHYS_TICKS) {
+            if (!latched && ++physTicksSinceUpdate > EXPIRY_PHYS_TICKS) {
                 // the game thread stopped refreshing (source removed / out of range)
                 active = null;
                 activeGravity = null;
+                if (building == null) {
+                    // and nothing is offering: forget this ship until a field holds it again
+                    retired = true;
+                    STATES.remove(shipId, this);
+                }
             }
             sources = active;
             gravityActing = activeGravity;
@@ -480,10 +494,10 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
         double spinSq = relativeSpin.lengthSquared();
         if (relativeSpin.isFinite() && spinSq > 1.0E-8) {
             Vector3d axis = new Vector3d(relativeSpin).div(Math.sqrt(spinSq));
-            double selfInertia = inertiaAbout(self.getMomentOfInertia(), axis);
+            double selfInertia = inertiaAbout(self, axis);
             double reducedInertia = selfInertia;
             if (partner != null) {
-                double partnerInertia = inertiaAbout(partner.getMomentOfInertia(), axis);
+                double partnerInertia = inertiaAbout(partner, axis);
                 if (selfInertia + partnerInertia > 0.0) {
                     reducedInertia = selfInertia * partnerInertia / (selfInertia + partnerInertia);
                 }
@@ -513,9 +527,16 @@ public final class GravityCoreForceInducer implements ShipForcesInducer, ShipPhy
         }
     }
 
-    /** Scalar moment of inertia about a unit axis: axis^T I axis. */
-    private static double inertiaAbout(Matrix3dc inertia, Vector3dc axis) {
-        Vector3d transformed = inertia.transform(axis, new Vector3d());
+    /**
+     * Scalar moment of inertia about a unit WORLD axis: a^T I a, with the
+     * axis first taken into the ship's own axes — VS's inertia tensor is in
+     * SHIP axes (the same computation as Camafy's PhysBody.inertiaAbout).
+     * Using the world axis directly damped a rotated, non-symmetric ship's
+     * spin against the wrong inertia.
+     */
+    private static double inertiaAbout(PhysShip ship, Vector3dc worldAxis) {
+        Vector3d axis = ship.getTransform().getShipToWorldRotation().transformInverse(new Vector3d(worldAxis));
+        Vector3d transformed = ship.getMomentOfInertia().transform(axis, new Vector3d());
         return Math.max(0.0, transformed.dot(axis));
     }
 }

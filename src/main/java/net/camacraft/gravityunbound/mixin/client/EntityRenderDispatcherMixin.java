@@ -150,6 +150,31 @@ public abstract class EntityRenderDispatcherMixin {
         }
     }
     
+    /**
+     * NO F3+B HITBOX ON A GUI PORTRAIT. Vanilla draws the entity's world box after its renderer in
+     * the same pose, in the inventory's paper doll too. The doll is drawn upright and at its normal
+     * size whatever the entity's real size and frame (Camafy's portrait restore, Pehkui's own doll
+     * scaling), while the box is the entity's world box: at 1/16 in VS Genesis's space it came out
+     * sixteen times the doll and covered the inventory, and flashed between that and the right size
+     * as the entity's box was refreshed (the owner's report of 2026-09-30). There is no box that is
+     * right for a doll drawn at a size the entity isn't, so none is drawn there; entities in the
+     * world keep theirs, and Gravity Unbound's own capsule outline still shows on the doll.
+     */
+    @WrapOperation(
+        method = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;render(Lnet/minecraft/world/entity/Entity;DDDFFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;renderHitbox(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;Lnet/minecraft/world/entity/Entity;F)V"
+        )
+    )
+    private static void gravityunbound$noHitboxOnPortraits(PoseStack poseStack, VertexConsumer buffer, Entity entity, float partialTick,
+                                                           Operation<Void> original) {
+        if (net.camacraft.camafy.client.render.GuiEntityRender.active()) {
+            return;
+        }
+        original.call(poseStack, buffer, entity, partialTick);
+    }
+
     @org.spongepowered.asm.mixin.Shadow
     @org.spongepowered.asm.mixin.Final
     private static net.minecraft.client.renderer.RenderType SHADOW_RENDER_TYPE;

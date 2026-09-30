@@ -375,7 +375,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
         flightEndLogCooldown = 20;
         Vec3 up = getUpVector();
-        LOGGER.info("[GravityUnbound] flight end [{}] {}: serverOnGround={} clientOnGround={} clientOnGroundAge={} "
+        LOGGER.debug("[GravityUnbound] flight end [{}] {}: serverOnGround={} clientOnGround={} clientOnGroundAge={} "
                 + "clientAuthoritative={} capsule={} capsuleGrounded={} visualDefault={} fieldGrace={} attached={} "
                 + "passenger={} inWater={} up=({},{},{}) dm={}",
             path, entity.getName().getString(), serverOnGround, clientOnGround, clientOnGroundAge,
@@ -435,7 +435,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         net.minecraft.world.phys.AABB upright =
             entity.getDimensions(entity.getPose()).makeBoundingBox(entity.position());
         Vec3 targetUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualTarget);
-        LOGGER.info("[GravityUnbound] ridden[{}] {}: ownedHere={} pos={} up={} targetUp={} visualDefault={} dir={} "
+        LOGGER.debug("[GravityUnbound] ridden[{}] {}: ownedHere={} pos={} up={} targetUp={} visualDefault={} dir={} "
                 + "grace={} field={} held={} onGround={} capsuleGrounded={} capsule={} dmLocal={} uprightClear={}",
             entity.level().isClientSide() ? "C" : "S",
             entity.getName().getString(),
@@ -701,13 +701,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
             Vec3 fUp = RotationUtil.vecPlayerToWorld(new Vec3(0, 1, 0), visualRotation);
             boolean vsDraggable = ShipEntities.isDraggable(entity);
             org.valkyrienskies.mod.common.util.EntityDraggingInformation dbgDrag = VsTyped.dragInfo(entity);
-            LOGGER.info(
+            LOGGER.debug(
                 "[GravityUnbound] vs-drag[{}]: draggable={} beingDragged={} shipRef={} ticksSince={} camVsTickDist={}",
                 entity.level().isClientSide() ? "C" : "S",
                 vsDraggable, dbgDrag.isEntityBeingDraggedByAShip(),
                 dbgDrag.getLastShipStoodOn() != null, dbgDrag.getTicksSinceStoodOnShip(),
                 String.format(java.util.Locale.ROOT, "%.4f", dbgCamVsTickDist));
-            LOGGER.info(
+            LOGGER.debug(
                 "[GravityUnbound] chain[{}]: fx/t={} grace={} held={} tgtVec={} tgtUp={} frameUp={} gapDeg={} capsule={}",
                 entity.level().isClientSide() ? "C" : "S",
                 dbgEffectsQueued, fieldGraceTicks,
@@ -721,7 +721,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                     Math.toDegrees(angleBetween(visualRotation, visualTarget))),
                 useCapsuleCollision());
             Vec3 dbgDm = entity.getDeltaMovement();
-            LOGGER.info(
+            LOGGER.debug(
                 "[GravityUnbound] pull[{}]: {} deficit={} strength={} grounded={}/{} dmLocal=({},{},{})",
                 entity.level().isClientSide() ? "C" : "S",
                 dbgDeficitState,

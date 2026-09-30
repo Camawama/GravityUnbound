@@ -68,6 +68,7 @@
     "compat.VSEntityDraggerMixin",
     "compat.VSEntityDraggingInformationMixin",
     "compat.VSEntityShipCollisionMixin",
+    "compat.VSForgeNetworkingMixin",
     "compat.VModPhysgunRotationMixin",
     "compat.VModPhysgunStateMixin",
     "compat.VanillaBackportServerEntityMixin",

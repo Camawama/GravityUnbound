@@ -45,6 +45,19 @@ public class GravityMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
+		if(mixinClassName.equals("net.camacraft.gravityunbound.mixin.compat.VSForgeNetworkingMixin"))
+		{
+			// Targets the lambda VS 2.4.11 compiled its Forge packet consumer to (see the mixin): only for that build.
+			net.minecraftforge.fml.loading.moddiscovery.ModFileInfo vs = LoadingModList.get().getModFileById("valkyrienskies");
+			String version = vs == null || vs.getMods().isEmpty() ? "" : vs.getMods().get(0).getVersion().toString();
+			if(!version.startsWith("2.4.11"))
+			{
+				org.slf4j.LoggerFactory.getLogger("GravityUnbound").warn(
+					"[GravityUnbound] Valkyrien Skies {} isn't the 2.4.11 build: VS's server packet handling stays on the network thread"
+						+ " (its player-on-ship position updates can crash the server with a ConcurrentModificationException)", version);
+				return false;
+			}
+		}
 		return true;
 	}
 

@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.valkyrienskies.core.api.ships.Ship;
 import org.valkyrienskies.mod.common.util.EntityDragger;
+import org.valkyrienskies.mod.common.util.IEntityDraggingInformationProvider;
 
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -143,6 +144,86 @@ public abstract class VSEntityDraggerMixin {
     )
     private void gravityunbound$projectDragServerHeadYaw(ServerPlayer player, float newHeadYaw) {
         player.yHeadRot = gravityunbound$projectYaw(player, player.yHeadRot, newHeadYaw);
+    }
+
+    /**
+     * WHERE THE CARRY STARTS, for a rider held to the ship.
+     *
+     * On the client VS carries a dragged entity from where it STARTED the
+     * tick ({@code xo/yo/zo}) and adds the entity's own step for the tick on
+     * top, in world space, unturned. Its per-frame render-ride
+     * ({@code MixinGameRenderer.preRender}) assumes the opposite, that the
+     * step turned with the ship: it draws the entity at
+     * {@code renderPose * prevPose^-1 * (xo + step * partialTick)}. On a
+     * spinning ship the two disagree by a tick of rotation. The tick moved a
+     * walking rider off to the side of where they looked, against the spin
+     * (57 degrees at 20 rad/s), while each frame slid the camera along the
+     * look direction and then snapped it sideways at the tick boundary:
+     * walking on fast-spinning plating stuttered and veered. Measured with the
+     * pack harness (ride_*): the camera's speed jumped by 35 player heights
+     * per second at every tick boundary at 5 rad/s, 70 at 10 and 130 at 20,
+     * against a walking speed of 2 to 4.
+     *
+     * An attached rider takes its step in the ship's frame (the frame carries
+     * the ship's rotation, and the step collided with the ship where the ship
+     * was), so the whole step belongs to the ship: carry from where the body
+     * is now. The walk then goes where the rider looks, and the render-ride
+     * lands exactly on the tick positions. Only the local player's own body
+     * (the side that moves it), and only while it is attached to the ship
+     * dragging it; everything else keeps VS's carry.
+     */
+    @WrapOperation(
+        method = "dragEntitiesWithShips",
+        at = @At(
+            value = "FIELD",
+            target = "Lnet/minecraft/world/entity/Entity;xo:D",
+            opcode = Opcodes.GETFIELD,
+            remap = true
+        ),
+        remap = false
+    )
+    private double gravityunbound$carryFromX(Entity entity, Operation<Double> original) {
+        return gravityunbound$carriesWholeStep(entity) ? entity.getX() : original.call(entity);
+    }
+
+    @WrapOperation(
+        method = "dragEntitiesWithShips",
+        at = @At(
+            value = "FIELD",
+            target = "Lnet/minecraft/world/entity/Entity;yo:D",
+            opcode = Opcodes.GETFIELD,
+            remap = true
+        ),
+        remap = false
+    )
+    private double gravityunbound$carryFromY(Entity entity, Operation<Double> original) {
+        return gravityunbound$carriesWholeStep(entity) ? entity.getY() : original.call(entity);
+    }
+
+    @WrapOperation(
+        method = "dragEntitiesWithShips",
+        at = @At(
+            value = "FIELD",
+            target = "Lnet/minecraft/world/entity/Entity;zo:D",
+            opcode = Opcodes.GETFIELD,
+            remap = true
+        ),
+        remap = false
+    )
+    private double gravityunbound$carryFromZ(Entity entity, Operation<Double> original) {
+        return gravityunbound$carriesWholeStep(entity) ? entity.getZ() : original.call(entity);
+    }
+
+    private static boolean gravityunbound$carriesWholeStep(Entity entity) {
+        if (!entity.level().isClientSide() || !entity.isControlledByLocalInstance()) {
+            return false;
+        }
+        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
+        if (comp == null) {
+            return false;
+        }
+        Long ship = ((IEntityDraggingInformationProvider) entity).getDraggingInformation().getLastShipStoodOn();
+        return ship != null && comp.isShipAttachedTo(ship);
     }
 
     private static float gravityunbound$projectYaw(Entity entity, float currentYaw, float newYaw) {

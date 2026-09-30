@@ -3702,6 +3702,11 @@ public class GravityCapabilityImpl implements IGravityCapability {
         return attachShip != null;
     }
 
+    /** Whether the entity is attached (see {@link #isShipFieldAnchored()}) to this ship. */
+    public boolean isShipAttachedTo(long shipId) {
+        return attachShip != null && attachShip.getId() == shipId;
+    }
+
     /**
      * True while Gravity Unbound OWNS this entity's gravity: a field (or its
      * grace window) is active, or the base gravity is not plain down. Used

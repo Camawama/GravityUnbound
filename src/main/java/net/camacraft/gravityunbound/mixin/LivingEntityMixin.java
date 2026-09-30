@@ -211,7 +211,7 @@ public abstract class LivingEntityMixin extends Entity {
     )
     private void inject_updateLimbs(boolean flutter, CallbackInfo ci) {
     	LivingEntity entity = (LivingEntity) (Object) this;
-        if (GravityChangerAPI.isGravityDefault(entity)) return;
+        if (gravityunbound$movementFrameDefault(entity)) return;
 
         ci.cancel();
 
@@ -234,7 +234,7 @@ public abstract class LivingEntityMixin extends Entity {
         )
     )
     private double wrapOperation_tick_getX_0(LivingEntity livingEntity, Operation<Double> original) {
-        if (GravityChangerAPI.isGravityDefault(livingEntity)) {
+        if (gravityunbound$movementFrameDefault(livingEntity)) {
             return original.call(livingEntity);
         }
 
@@ -250,11 +250,25 @@ public abstract class LivingEntityMixin extends Entity {
         )
     )
     private double wrapOperation_tick_getZ_0(LivingEntity livingEntity, Operation<Double> original) {
-        if (GravityChangerAPI.isGravityDefault(livingEntity)) {
+        if (gravityunbound$movementFrameDefault(livingEntity)) {
             return original.call(livingEntity);
         }
 
         return RotationUtil.vecWorldToPlayer(livingEntity.getX() - livingEntity.xo, livingEntity.getY() - livingEntity.yo, original.call(livingEntity) - livingEntity.zo, GravityChangerAPI.getMovementRotation(livingEntity)).z + livingEntity.zo;
+    }
+
+    /**
+     * Whether the frame the body turn and the walk animation read a move in ({@link GravityChangerAPI#getMovementRotation}:
+     * a player's visual frame, anything else's physics frame) is vanilla's. They asked whether the PHYSICS frame was,
+     * and a player's physics gravity is one of the six axis directions: on plating on a tumbling ship it was plain "down" on
+     * some ticks while the frame the player walks in was tilted, and on those ticks vanilla got the move in world
+     * axes - which turn with the ship under a player walking straight across it. The body swung toward that, up to 40
+     * degrees a tick, left and right of the head (the owner's walk on a spinning 1/16 ship). The body-turn threshold
+     * below already asked about the visual frame.
+     */
+    private static boolean gravityunbound$movementFrameDefault(LivingEntity entity) {
+        return entity instanceof net.minecraft.world.entity.player.Player
+                ? GravityChangerAPI.isAimDefault(entity) : GravityChangerAPI.isGravityDefault(entity);
     }
     
     @Redirect(

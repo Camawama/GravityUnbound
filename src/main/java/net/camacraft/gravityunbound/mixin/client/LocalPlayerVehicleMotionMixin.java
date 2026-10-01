@@ -66,7 +66,12 @@ public abstract class LocalPlayerVehicleMotionMixin {
         ClientShip ship = VSGameUtilsKt.getShipObjectWorld(level).getAllShips().getById(shipId);
         if (ship == null) return;
         Vector3d rel = ship.getWorldToShip().transformPosition(new Vector3d(vehicle.getX(), vehicle.getY(), vehicle.getZ()));
-        double relYaw = EntityLerper.INSTANCE.yawToShip(ship, vehicle.getYRot());
-        GravityNetwork.sendToServer(new ShipVehicleMotionPacket(vehicle.getId(), ship.getId(), rel.x, rel.y, rel.z, relYaw, vehicle.getXRot()));
+        // a vehicle held to this ship's field: its yaw is its heading in a frame that turns with the ship, the same
+        // frame the server keeps, so it goes as it is; VS's world-yaw conversion wanders on a ship that rolls or
+        // pitches (the owner's car on a tumbling ship, 2026-09-30)
+        boolean frameHeading = comp != null && comp.isShipAttachedTo(shipId);
+        double relYaw = frameHeading ? vehicle.getYRot() : EntityLerper.INSTANCE.yawToShip(ship, vehicle.getYRot());
+        GravityNetwork.sendToServer(new ShipVehicleMotionPacket(vehicle.getId(), ship.getId(), rel.x, rel.y, rel.z, relYaw,
+            vehicle.getXRot(), frameHeading));
     }
 }

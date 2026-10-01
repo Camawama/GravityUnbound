@@ -242,13 +242,12 @@ public abstract class VSEntityDraggerMixin {
         // to its riders) — and moves the twist into yaw itself with exact
         // compensation when the frame is settled. Suppress VS's yaw entirely
         // so nothing double-turns.
-        if (comp.isShipAttached() && entity instanceof LivingEntity) {
+        if (comp.isShipAttached()) {
+            // living or not: an attached rider's frame carries the ship's whole turn (twist included), and its yaw
+            // is its heading in that frame. VS's world-yaw delta is a projection that wanders on a ship that rolls
+            // or pitches; adding it here turned a parked car against its deck (the owner's video of 2026-09-30).
             return currentYaw;
         }
-        // A NON-LIVING rider (a car, a boat, an item) attached to the ship keeps VS's yaw: its
-        // frame takes only the swing of the ship's turn (GravityCapabilityImpl.applyShipAttachCarry),
-        // so the twist has to reach its heading here, projected onto the frame's up like any other
-        // rotated frame's. An upright frame gets VS's value exactly.
         if (comp.isVisuallyDefault()) {
             return newYaw;
         }

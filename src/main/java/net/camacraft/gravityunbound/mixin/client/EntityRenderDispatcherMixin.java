@@ -215,7 +215,8 @@ public abstract class EntityRenderDispatcherMixin {
         }
         else {
             BlobShadow.render(matrices, vertexConsumers, entity, opacity, tickDelta, world,
-                gravityunbound$blob(entity, tickDelta, radius, comp));
+                gravityunbound$blob(entity, tickDelta, radius, comp),
+                net.camacraft.camafy.client.render.ShipShadows.under(entity, tickDelta));
         }
         matrices.popPose();
     }

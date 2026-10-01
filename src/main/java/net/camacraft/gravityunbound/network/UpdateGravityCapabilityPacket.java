@@ -43,11 +43,30 @@ public class UpdateGravityCapabilityPacket
 	// where a sequence of deltas silently loses or double-applies one. The
 	// client stores the last value it saw and applies the difference.
 	private final double frameYawReparam;
+	// A NON-LIVING RIDER OF A SHIP (a car parked on plating): the ship it rides, its frame in the SHIP's coordinates
+	// and its heading. Clients rebuild the frame against their own pose of the ship every tick and draw it against the
+	// drawn deck, so nothing chases, lags or pairs a world frame with a pose they never saw. -1: not riding.
+	private final long attachShipId;
+	@Nullable
+	private final Quaternionf attachLocal;
+	private final float attachYaw;
 
 	public UpdateGravityCapabilityPacket(boolean noAnimation, UUID entityUUID, Vec3 baseGravityDirection, Vec3 currentGravityDirection,
 										 double baseGravityStrength, double currentGravityStrength, Quaternionf rotation,
 										 @Nullable Vec3 targetGravityVector, double frameYawReparam)
 	{
+		this(noAnimation, entityUUID, baseGravityDirection, currentGravityDirection, baseGravityStrength, currentGravityStrength,
+			rotation, targetGravityVector, frameYawReparam, -1L, null, Float.NaN);
+	}
+
+	public UpdateGravityCapabilityPacket(boolean noAnimation, UUID entityUUID, Vec3 baseGravityDirection, Vec3 currentGravityDirection,
+										 double baseGravityStrength, double currentGravityStrength, Quaternionf rotation,
+										 @Nullable Vec3 targetGravityVector, double frameYawReparam,
+										 long attachShipId, @Nullable Quaternionf attachLocal, float attachYaw)
+	{
+		this.attachShipId = attachShipId;
+		this.attachLocal = attachLocal;
+		this.attachYaw = attachYaw;
 		this.frameYawReparam = frameYawReparam;
 		this.noAnimation = noAnimation;
 		this.entityUUID = entityUUID;
@@ -77,6 +96,17 @@ public class UpdateGravityCapabilityPacket
 		{
 			this.targetGravityVector = null;
 		}
+		this.attachShipId = buf.readLong();
+		if (buf.readBoolean())
+		{
+			this.attachLocal = new Quaternionf(buf.readFloat(), buf.readFloat(), buf.readFloat(), buf.readFloat());
+			this.attachYaw = buf.readFloat();
+		}
+		else
+		{
+			this.attachLocal = null;
+			this.attachYaw = Float.NaN;
+		}
 	}
 
 	public void encode(FriendlyByteBuf buf)
@@ -102,6 +132,17 @@ public class UpdateGravityCapabilityPacket
 			buf.writeDouble(this.targetGravityVector.x);
 			buf.writeDouble(this.targetGravityVector.y);
 			buf.writeDouble(this.targetGravityVector.z);
+		}
+	
+		buf.writeLong(this.attachShipId);
+		buf.writeBoolean(this.attachLocal != null);
+		if (this.attachLocal != null)
+		{
+			buf.writeFloat(this.attachLocal.x());
+			buf.writeFloat(this.attachLocal.y());
+			buf.writeFloat(this.attachLocal.z());
+			buf.writeFloat(this.attachLocal.w());
+			buf.writeFloat(this.attachYaw);
 		}
 	}
 
@@ -130,7 +171,7 @@ public class UpdateGravityCapabilityPacket
 							cap.syncFrameYawReparam(message.frameYawReparam);
 							cap.sync(message.noAnimation, message.baseGravityDirection, message.currentGravityDirection,
 								message.baseGravityStrength, message.currentGravityStrength, message.rotation,
-								message.targetGravityVector);
+								message.targetGravityVector, message.attachShipId, message.attachLocal, message.attachYaw);
 						});
 					});
 				}

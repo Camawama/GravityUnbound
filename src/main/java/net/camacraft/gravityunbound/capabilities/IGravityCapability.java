@@ -2,6 +2,7 @@ package net.camacraft.gravityunbound.capabilities;
 
 import net.camacraft.gravityunbound.GravityAPI;
 
+import org.jetbrains.annotations.Nullable;
 import org.joml.Quaternionf;
 
 import net.minecraft.nbt.CompoundTag;
@@ -23,6 +24,12 @@ public interface IGravityCapability extends INBTSerializable<CompoundTag>
 	void applyGravityChange();
 
 	void sync(boolean noAnimation, Vec3 baseGravityDirection, Vec3 currentGravityDirection, double baseGravityStrength, double currentGravityStrength, Quaternionf rotation, @org.jetbrains.annotations.Nullable Vec3 targetGravityVector);
+
+	/**
+	 * As {@link #sync(boolean, Vec3, Vec3, double, double, Quaternionf, Vec3)}, with the ship a non-living rider is
+	 * attached to, its frame in that ship's coordinates and its heading ({@code attachShipId} -1: none).
+	 */
+	void sync(boolean noAnimation, Vec3 baseGravityDirection, Vec3 currentGravityDirection, double baseGravityStrength, double currentGravityStrength, Quaternionf rotation, @Nullable Vec3 targetVector, long attachShipId, @Nullable Quaternionf attachLocal, float attachYaw);
 
 	/**
 	 * Applies the server's running total of frame-yaw re-parametrizations.

@@ -120,6 +120,33 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // against the pose the ship is actually DRAWN at.
     @Nullable
     private org.valkyrienskies.core.api.ships.Ship attachShip = null;
+
+    // ANOTHER MOD OWNS THE MOTION (Camafy's physics claims): Gravity Unbound keeps the frame as a coordinate system
+    // (Entity.move's SELF rotation, movementToWorld / worldToMovement) and stands down from the rest (see tick()).
+    //   foreignMotion: another owner claims MOTION. No velocity edits: the field's pull, friction, the transition
+    //                  pull, the idle anchor (all of them living bodies' only).
+    //   foreignHold:   another owner holds the body outright (every aspect: Physgun Unbound's beam, an MKW race), or
+    //                  moves a living one (Physgun's freeze). Also no attachment to a ship, no carry with it, no
+    //                  re-registration with VS's dragging and no pushing out of blocks.
+    // A vehicle another mod drives (MKW's free-roam karts claim MOTION and everything but IMPACT) keeps riding the
+    // field it is in: MKW drives it in Gravity Unbound's frame and relies on the ship carrying that frame.
+    private static final net.minecraft.resources.ResourceLocation OWNER =
+        new net.minecraft.resources.ResourceLocation("gravityunbound", "field");
+    private boolean foreignMotion;
+    private boolean foreignHold;
+    // a non-living rider left its ship this tick: the frame's carried twist is about to be dropped for the cardinal
+    // frame, and its heading has to pay for it (advanceVisualRotation's snap)
+    private boolean nonLivingDetached;
+
+    // A REMOTE NON-LIVING RIDER (another client's copy of a car parked on a ship): the server sends the frame in the
+    // SHIP'S coordinates and the heading, and this client rebuilds the frame against its own pose of the ship every
+    // tick (advanceVisualRotation), so nothing lags or chases while the deck turns.
+    private long syncedAttachShipId = -1L;
+    private @Nullable Quaternionf syncedAttachLocal = null;
+    private float syncedAttachYaw = Float.NaN;
+    private long lastSyncedAttachShipId = -1L;
+    private final Quaternionf lastSyncedAttachLocal = new Quaternionf();
+    private float lastSyncedAttachYaw = Float.NaN;
     // the ship->world rotation the CURRENT tick frame corresponds to, and the
     // one the PREVIOUS tick frame corresponds to: frame * rot is the frame in
     // the ship's own coordinates, which is what render interpolation must
@@ -694,8 +721,23 @@ public class GravityCapabilityImpl implements IGravityCapability {
             return;
         }
 
-        applyShipIdleAnchor();
-        applyShipAttachCarry();
+        boolean foreignBefore = foreignHold;
+        int foreignClaims = PhysicsOwnership.any() ? PhysicsOwnership.claimsExcept(entity, OWNER) : 0;
+        foreignMotion = net.camacraft.camafy.physics.PhysicsAspect.MOTION.in(foreignClaims);
+        foreignHold = foreignClaims == net.camacraft.camafy.physics.PhysicsAspect.ALL
+            || (foreignMotion && entity instanceof LivingEntity);
+        if (foreignHold && !foreignBefore && attachShip != null) {
+            // taken over while riding a ship (the physgun lifting a mob off plating): the ship lets go now, and hands
+            // no momentum to whatever holds it
+            ShipEntities.letGo(entity, attachShip.getId(), false);
+        }
+
+        if (!foreignMotion) {
+            applyShipIdleAnchor();
+        }
+        if (!foreignHold) {
+            applyShipAttachCarry();
+        }
         if (entity.tickCount % 40 == 0
             && (entity instanceof Player)
             && (dbgEffectsQueued > 0 || lastGroundNormal != null || !isVisuallyDefault())) {
@@ -750,14 +792,22 @@ public class GravityCapabilityImpl implements IGravityCapability {
         updateGravityStatus();
         applyGravityChange();
         applyGravityStrengthAttribute();
-        applyFieldPullDeficit();
+        if (!foreignMotion) {
+            applyFieldPullDeficit();
+        }
         maybeSnapFreshSpawn();
         updateSurfaceProbe();
         updateShipAttachment();
         advanceVisualRotation();
-        clearBlocksOnFieldExit();
-        applyTransitionPull();
-        applyStaticFriction();
+        // these move the body or change its velocity; while another mod owns the motion they stand down (the frame
+        // itself, a coordinate system, keeps following the field)
+        if (!foreignHold) {
+            clearBlocksOnFieldExit();
+        }
+        if (!foreignMotion) {
+            applyTransitionPull();
+            applyStaticFriction();
+        }
         capsuleExitWatchdog();
 
         if (!entity.level().isClientSide()) {
@@ -1060,23 +1110,16 @@ public class GravityCapabilityImpl implements IGravityCapability {
             capsuleGroundNormal = gravityunbound$rotate(delta, capsuleGroundNormal);
         }
 
+        // A VEHICLE, AN ITEM, A MINECART takes the ship's FULL turn in its frame too, twist included, and keeps its
+        // yaw: the heading in the frame. The earlier design (the frame taking only the swing, the twist reaching the
+        // yaw through VS's dragger) was exact only for a ship spinning about world up: VS's "yaw delta" is a world
+        // projection, so on a ship that rolls or pitches as well the heading wandered the whole circle against the
+        // deck (the owner's video of 2026-09-30 22:55: a car on a moving, turning ship "rotating all weird ways";
+        // harness car_tumble: 179 degrees of wander while parked). A rider's ship-relative orientation is now constant
+        // by construction, living or not; VS's dragger yaw is suppressed for every attached rider
+        // (compat.VSEntityDraggerMixin) and normalizeTwist leaves a non-living rider's twist in the frame while it is
+        // attached.
         org.joml.Quaterniond frameDelta = delta;
-        if (!(entity instanceof LivingEntity)) {
-            // A VEHICLE, AN ITEM, A MINECART: its heading IS its yaw, and Valkyrien Skies' dragger
-            // turns that yaw with the ship (compat.VSEntityDraggerMixin lets it, for non-living
-            // riders). So the frame takes only the SWING of the ship's turn - the tilt of the deck
-            // under it - and never the twist about the frame's up: a deck spinning about its up
-            // leaves the frame canonical, and the model is drawn from the yaw alone, which the
-            // clients receive in the ship's own axes and interpolate there. Routing the twist
-            // through the frame (as living riders do, whose look and body yaw normalizeTwist
-            // compensates exactly) left a parked car's yaw a step behind or ahead of its deck
-            // every tick (the owner's car on plating, 2026-09-30: "its model stutters its
-            // rotation").
-            frameDelta = gravityunbound$swingOnly(delta, getUpVector());
-            if (frameDelta.w > 0.99999999) {
-                return;
-            }
-        }
 
         pendingShipDelta = new Quaternionf(
             (float) frameDelta.x, (float) frameDelta.y, (float) frameDelta.z, (float) frameDelta.w);
@@ -1138,18 +1181,46 @@ public class GravityCapabilityImpl implements IGravityCapability {
         // field anchors the rider's frame to the ship (see the vehicle
         // branch of updateGravityStatus), so the view turns with the ship
         // exactly like a standing rider's; VS positions the body itself.
+        if (ship != null && entity instanceof Player flyer && flyer.getAbilities().flying
+            && ticksSinceFieldEffect >= 2 && ticksSinceFieldEffect != Integer.MAX_VALUE) {
+            // CREATIVE FLIGHT OUT OF THE FIELD (the owner's report of 2026-09-30): no field has reached the player for
+            // two ticks, and a flyer holds no surface, so nothing of the ship holds it any more. The field's grace
+            // (FIELD_GRACE_TICKS) kept it attached, re-registered with VS's dragging every tick, and VS carried it for
+            // another 25 ticks after that: the player went on moving with the ship outside its field. Let go now
+            // (below, where the attachment ends). Two ticks, not one: a single tick without a field effect also
+            // happens inside a field on a fast ship.
+            ship = null;
+        }
         boolean passenger = entity.isPassenger();
         if ((passenger && fieldAnchorShip == null)
             || entity instanceof net.minecraft.world.entity.projectile.Projectile
-            || shouldAcceptServerSync()) {
+            || foreignHold) {
             ship = null;
         }
+        else if (shouldAcceptServerSync()) {
+            // this client's copy of an entity it doesn't simulate: a NON-LIVING rider (a parked car, another player's
+            // car) attaches to the ship the server says it rides, so its frame is rebuilt against this client's own
+            // pose of that ship and drawn against the drawn deck (getRenderRotation); living remotes keep VS's own
+            // handling
+            ship = entity instanceof LivingEntity ? null : gravityunbound$syncedAttachShip();
+        }
 
+        if (!(entity instanceof LivingEntity) && attachShip != null && ship == null) {
+            nonLivingDetached = true;
+        }
         if (ship != attachShip
             && (ship == null || attachShip == null || ship.getId() != attachShip.getId())) {
             // a different ship (or none): the stored poses belong to the old
             // one — re-seed the render bookkeeping
             attachRotValid = false;
+            if (ship == null && attachShip != null && entity instanceof Player player && player.getAbilities().flying
+                && entity.level().isClientSide() && entity.isControlledByLocalInstance()) {
+                // LEAVING THE FIELD IN CREATIVE FLIGHT (the owner's report of 2026-09-30): nothing of the ship is
+                // under the player any more, but VS keeps carrying a body for 25 ticks after it last stood on a
+                // ship, so the player went on moving with the ship outside the field. Let go now, and keep no
+                // momentum from the ship: flight has no inertia to hand it to.
+                ShipEntities.letGo(entity, attachShip.getId(), false);
+            }
         }
         attachShip = ship;
 
@@ -1401,11 +1472,16 @@ public class GravityCapabilityImpl implements IGravityCapability {
         boolean pulledSomewhere = targetGravityVector != null
             && targetGravityVector.distanceToSqr(DOWN) > 1.0E-6;
 
+        // a ship attachment is a reason for a turned frame of its own: the frame carries the ship's turn. A client's
+        // copy of a car parked on a ship's plating computes no field (the server does) and was "healed" back upright
+        // every 40 ticks, its heading paying for it, then put back by the next sync: a 60 degree flick of the model
+        // every two seconds (harness car_spin60, 2026-10-01)
         boolean influenced = fieldGraceTicks > 0
             || pulledSomewhere
             || lastGroundNormal != null
             || !baseGravityDirection.equals(DOWN)
-            || entity.getVehicle() != null;
+            || entity.getVehicle() != null
+            || attachShip != null;
         if (influenced || !useCapsuleCollision()) {
             capsuleNoInfluenceTicks = 0;
             return;
@@ -2638,7 +2714,28 @@ public class GravityCapabilityImpl implements IGravityCapability {
         // itself (see the field BEs), and the synced target lags a tick or
         // two — mixing the two frames is exactly the item/orb rubber-band.
         boolean preferLocal = !(entity instanceof LivingEntity) && fieldGraceTicks > 0;
-        if (syncedVisualTarget != null && shouldAcceptServerSync() && !preferLocal) {
+        if (shouldAcceptServerSync() && !(entity instanceof LivingEntity) && attachShip != null
+            && syncedAttachLocal != null && attachShip.getId() == syncedAttachShipId) {
+            // A REMOTE VEHICLE RIDING A SHIP: the frame the server sent is in the SHIP's coordinates; re-expressed
+            // against this client's own tick pose of the ship it is exact, tick after tick, with no chase to lag and
+            // no synced world frame to pair with a pose this client never saw. The render pass then draws it against
+            // the ship's drawn pose (the attach reconstruction in getRenderRotation).
+            org.joml.Quaterniond shipRot = VsTyped.rotation(attachShip, ShipRef.Pose.TICK);
+            Quaternionf frame = new Quaternionf(syncedAttachLocal)
+                .mul(new Quaternionf(shipRot).conjugate()).normalize();
+            visualTarget.set(frame);
+            visualRotation.set(frame);
+            lastChaseTarget.set(frame);
+            if (syncedVisualTarget != null) {
+                syncedVisualTarget.set(frame);
+            }
+            // and the heading in that frame, the server's: the frame and the heading are one pair, so they are taken
+            // in the same tick (a parked car's never change; a car steered elsewhere steps once a tick)
+            if (!Float.isNaN(syncedAttachYaw) && Math.abs(Mth.wrapDegrees(entity.getYRot() - syncedAttachYaw)) > 1.0E-3F) {
+                entity.setYRot(syncedAttachYaw);
+            }
+        }
+        else if (syncedVisualTarget != null && shouldAcceptServerSync() && !preferLocal) {
             visualTarget.set(syncedVisualTarget);
         }
         else {
@@ -2666,9 +2763,21 @@ public class GravityCapabilityImpl implements IGravityCapability {
             // small rubber-bands on drifting items. Unlike projectiles their
             // deltaMovement IS local, so fall through to the world-velocity
             // re-expression below (one exact step per target change).
+            if (nonLivingDetached && !visualRotation.equals(visualTarget)) {
+                // LEFT ITS SHIP: while attached the frame carried the ship's whole turn (applyShipAttachCarry) and the
+                // heading stayed put in it; the cardinal frame snapped to now has none of that twist, so the heading
+                // takes it, keeping the body facing where it faced. Yaw only: the world-velocity re-expression below
+                // already covers this frame change.
+                Vec3 lookFlat = RotationUtil.vecPlayerToWorld(RotationUtil.rotToVec(entity.getYRot(), 0), visualRotation);
+                float newYaw = RotationUtil.vecToRot(RotationUtil.vecWorldToPlayer(lookFlat, visualTarget)).x;
+                float deltaYaw = Mth.wrapDegrees(newYaw - entity.getYRot());
+                entity.setYRot(entity.getYRot() + deltaYaw);
+                entity.yRotO += deltaYaw;
+            }
             lastChaseTarget.set(visualTarget);
             visualRotation.set(visualTarget);
         }
+        nonLivingDetached = false;
 
         // target stability: once the target stops moving, converge decisively
         // (also how the frame reaches EXACT identity quickly after leaving a
@@ -2785,6 +2894,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         float stepMoved = angleBetween(frameBefore, visualRotation);
         if (stepMoved > (float) Math.toRadians(1.5)
             && useCapsuleCollision()
+            && !foreignHold
             && entity.level().isClientSide() && entity.isControlledByLocalInstance()
         ) {
             net.camacraft.gravityunbound.util.CapsuleCollider.Result resolved =
@@ -2853,6 +2963,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
             if (isVisuallyDefault() || ticksSinceShipFrame > SHIP_FRAME_GRACE) {
                 frameFromShip = false;
             }
+        }
+
+        if (!(entity instanceof LivingEntity) && attachShip != null) {
+            // a vehicle riding a ship keeps the ship's whole turn in its frame and its heading in its yaw (see
+            // applyShipAttachCarry); unwinding the twist into the yaw here would turn it against the deck on every
+            // client that interpolates the yaw. It unwinds once it has left the ship.
+            return;
         }
 
         Quaternionf canonical = RotationUtil.getWorldRotationQuaternion(currGravityDirection);
@@ -3335,6 +3452,24 @@ public class GravityCapabilityImpl implements IGravityCapability {
                     }
                 }
             }
+            return;
+        }
+
+        if (!(entity instanceof LivingEntity) && attachShip != null) {
+            // ATTACHED TO A SHIP, PARKED (a car on a ship's plating with nobody in it): the frame carries the ship's
+            // whole turn (applyShipAttachCarry) and the heading stays put in it, so the body keeps its place on the
+            // deck however the ship turns. Rebuilding the target from the cardinal frame below would throw the
+            // carried twist away every tick and leave the body facing a fixed direction in the world while the deck
+            // turned under it. Transport the frame instead: rotate only by the change in up, no twist.
+            Vec3 attachedUp = effectiveTargetUp(target);
+            Vec3 upNow = getUpVector();
+            if (QuaternionUtil.angleBetween(upNow, attachedUp) < 1.0E-4) {
+                out.set(visualRotation);
+                return;
+            }
+            Vec3 headingNow = RotationUtil.vecPlayerToWorld(RotationUtil.rotToVec(entity.getYRot(), 0), visualRotation);
+            Quaternionf upChange = QuaternionUtil.getRotationBetween(upNow, attachedUp, headingNow);
+            out.set(visualRotation).mul(upChange.conjugate()).normalize();
             return;
         }
 
@@ -4257,10 +4392,25 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // ------------------------------------------------------------------
 
     private void maybeSendSync() {
+        boolean attachedVehicle = attachShip != null && !(entity instanceof LivingEntity);
+        boolean frameChanged;
+        if (attachedVehicle) {
+            // a vehicle riding a ship: its world frame turns every tick, its SHIP-relative frame and heading don't
+            // while parked, and those are what the clients rebuild from
+            Quaternionf local = gravityunbound$attachLocalFrame();
+            frameChanged = lastSyncedAttachShipId != attachShip.getId()
+                || angleBetween(lastSyncedAttachLocal, local) > 0.02f
+                || Float.isNaN(lastSyncedAttachYaw)
+                || Math.abs(Mth.wrapDegrees(entity.getYRot() - lastSyncedAttachYaw)) > 0.25f;
+        }
+        else {
+            frameChanged = angleBetween(lastSyncedVisualTarget, visualTarget) > 0.05f
+                || lastSyncedAttachShipId != -1L;
+        }
         boolean changed = needsSync
             || lastSyncedDirection != currGravityDirection
             || Math.abs(lastSyncedStrength - currGravityStrength) > 0.01
-            || angleBetween(lastSyncedVisualTarget, visualTarget) > 0.05f
+            || frameChanged
             || targetVectorChangedSinceSync();
 
         if (changed) {
@@ -4275,6 +4425,15 @@ public class GravityCapabilityImpl implements IGravityCapability {
             lastSyncedStrength = currGravityStrength;
             lastSyncedVisualTarget.set(visualTarget);
             lastSyncedTargetVector = targetGravityVector;
+            if (attachShip != null && !(entity instanceof LivingEntity)) {
+                lastSyncedAttachShipId = attachShip.getId();
+                lastSyncedAttachLocal.set(gravityunbound$attachLocalFrame());
+                lastSyncedAttachYaw = entity.getYRot();
+            }
+            else {
+                lastSyncedAttachShipId = -1L;
+                lastSyncedAttachYaw = Float.NaN;
+            }
             needsSync = false;
             noAnimation = false;
         }
@@ -4294,6 +4453,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
     }
 
     public UpdateGravityCapabilityPacket makeSyncPacket() {
+        boolean attachedVehicle = attachShip != null && !(entity instanceof LivingEntity);
         return new UpdateGravityCapabilityPacket(
             this.noAnimation, this.entity.getUUID(),
             baseGravityDirection,
@@ -4301,8 +4461,30 @@ public class GravityCapabilityImpl implements IGravityCapability {
             baseGravityStrength, currGravityStrength,
             new Quaternionf(visualTarget),
             targetGravityVector,
-            frameYawReparamTotal
+            frameYawReparamTotal,
+            attachedVehicle ? attachShip.getId() : -1L,
+            attachedVehicle ? gravityunbound$attachLocalFrame() : null,
+            attachedVehicle ? entity.getYRot() : Float.NaN
         );
+    }
+
+    /** The frame in the attached ship's coordinates (frame * the ship's tick rotation): constant while the rider sits still on it. */
+    private Quaternionf gravityunbound$attachLocalFrame() {
+        org.valkyrienskies.core.api.ships.Ship ship = attachShip;
+        if (ship == null) {
+            return new Quaternionf(visualTarget);
+        }
+        org.joml.Quaterniond shipRot = VsTyped.rotation(ship, ShipRef.Pose.TICK);
+        return new Quaternionf(visualTarget).mul(new Quaternionf(shipRot)).normalize();
+    }
+
+    /** The ship the server says this (non-living, remote) entity rides, as this client has it loaded; null if none. */
+    @Nullable
+    private org.valkyrienskies.core.api.ships.Ship gravityunbound$syncedAttachShip() {
+        if (syncedAttachShipId < 0L || entity == null) {
+            return null;
+        }
+        return VsTyped.loaded(entity.level(), syncedAttachShipId);
     }
 
     @Override
@@ -4312,6 +4494,24 @@ public class GravityCapabilityImpl implements IGravityCapability {
         double baseGravityStrength, double currentGravityStrength,
         Quaternionf rotation, @Nullable Vec3 targetVector
     ) {
+        sync(noAnimation, baseGravityDirection, currentGravityDirection, baseGravityStrength, currentGravityStrength,
+            rotation, targetVector, -1L, null, Float.NaN);
+    }
+
+    @Override
+    public void sync(
+        boolean noAnimation,
+        Vec3 baseGravityDirection, Vec3 currentGravityDirection,
+        double baseGravityStrength, double currentGravityStrength,
+        Quaternionf rotation, @Nullable Vec3 targetVector,
+        long attachShipId, @Nullable Quaternionf attachLocal, float attachYaw
+    ) {
+        // A non-living rider of a ship: its frame in the ship's coordinates and its heading in that frame, taken
+        // together in this client's next tick (advanceVisualRotation) for a copy it doesn't simulate. A vehicle this
+        // client drives keeps its own; the server's are an echo of what this client sent.
+        this.syncedAttachShipId = attachShipId;
+        this.syncedAttachLocal = attachLocal == null ? null : new Quaternionf(attachLocal);
+        this.syncedAttachYaw = attachYaw;
         this.baseGravityDirection = baseGravityDirection;
         this.baseGravityStrength = baseGravityStrength;
 

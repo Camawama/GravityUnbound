@@ -250,7 +250,16 @@ public final class GuGravityProvider implements GravityProvider {
     @Override
     public boolean ridesShipField(Entity entity) {
         GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
-        return comp != null && !entity.isRemoved() && comp.isInField() && comp.getFieldAnchorShip() != null;
+        if (comp == null || entity.isRemoved()) {
+            return false;
+        }
+        if (comp.isInField() && comp.getFieldAnchorShip() != null) {
+            return true;
+        }
+        // a client's copy of a vehicle (or any non-living body) the server holds in a ship's field: the client
+        // computes no field for it, but it is attached to the ship the server named (GravityCapabilityImpl.sync)
+        return !(entity instanceof net.minecraft.world.entity.LivingEntity) && entity.level().isClientSide()
+            && comp.isShipAttached();
     }
 
     @Override

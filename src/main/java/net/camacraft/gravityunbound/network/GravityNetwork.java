@@ -10,7 +10,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 
 public class GravityNetwork
 {
-	private static final String PROTOCOL_VERSION = "2";   // 2: the ship-frame vehicle report (2026-09-30)
+	private static final String PROTOCOL_VERSION = "3";   // 2: the ship-frame vehicle report (2026-09-30); 3: ship-held riders' frames and headings (2026-10-01)
 	// every message is registered with the one direction it may travel: one
 	// arriving the other way is dropped before its handler runs
 	public static final CamafyChannel NET = CamafyChannel.create(new ResourceLocation(GravityAPI.MODID, "gravityapi"), PROTOCOL_VERSION);

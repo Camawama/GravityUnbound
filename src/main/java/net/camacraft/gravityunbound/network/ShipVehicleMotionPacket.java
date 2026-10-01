@@ -42,8 +42,18 @@ public class ShipVehicleMotionPacket {
     /** The heading in the ship's axes, radians, VS's own convention ({@code EntityLerper.yawToShip}). */
     private final double relYaw;
     private final float pitch;
+    /**
+     * The heading is the vehicle's own yaw, unconverted: for a vehicle Gravity Unbound holds to the ship it is its heading
+     * in a frame that turns with the ship, the same frame on both sides (otherwise {@link #relYaw} is in VS's ship axes).
+     */
+    private final boolean frameHeading;
 
     public ShipVehicleMotionPacket(int vehicleId, long shipId, double x, double y, double z, double relYaw, float pitch) {
+        this(vehicleId, shipId, x, y, z, relYaw, pitch, false);
+    }
+
+    public ShipVehicleMotionPacket(int vehicleId, long shipId, double x, double y, double z, double relYaw, float pitch,
+                                   boolean frameHeading) {
         this.vehicleId = vehicleId;
         this.shipId = shipId;
         this.x = x;
@@ -51,10 +61,12 @@ public class ShipVehicleMotionPacket {
         this.z = z;
         this.relYaw = relYaw;
         this.pitch = pitch;
+        this.frameHeading = frameHeading;
     }
 
     public ShipVehicleMotionPacket(FriendlyByteBuf buf) {
-        this(buf.readVarInt(), buf.readLong(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readFloat());
+        this(buf.readVarInt(), buf.readLong(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readFloat(),
+            buf.readBoolean());
     }
 
     public static void encode(ShipVehicleMotionPacket msg, FriendlyByteBuf buf) {
@@ -65,6 +77,7 @@ public class ShipVehicleMotionPacket {
         buf.writeDouble(msg.z);
         buf.writeDouble(msg.relYaw);
         buf.writeFloat(msg.pitch);
+        buf.writeBoolean(msg.frameHeading);
     }
 
     public static class Handler {
@@ -92,8 +105,12 @@ public class ShipVehicleMotionPacket {
                 if (!Double.isFinite(world.x) || !Double.isFinite(world.y) || !Double.isFinite(world.z)) {
                     return;
                 }
-                // yawToWorld takes radians and gives DEGREES (yawToShip is the other way round)
-                double yaw = EntityLerper.INSTANCE.yawToWorld(ship, msg.relYaw);
+                // yawToWorld takes radians and gives DEGREES (yawToShip is the other way round); a heading in the
+                // ship-held frame crosses as it is
+                double yaw = msg.frameHeading ? msg.relYaw : EntityLerper.INSTANCE.yawToWorld(ship, msg.relYaw);
+                if (!Double.isFinite(yaw)) {
+                    return;
+                }
                 vehicle.setPos(world.x, world.y, world.z);
                 vehicle.setYRot((float) yaw);
                 vehicle.setXRot(msg.pitch);

@@ -130,6 +130,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // whether updateShipAttachment kept VS's dragging alive for an AIRBORNE
     // rider last tick (see there); ending that hold disarms the waiver it armed
     private boolean shipRideHeld = false;
+    // whether the entity rode a vehicle last tick (see updateShipAttachment: getting out)
+    private boolean wasPassenger = false;
     // eased 0..1 engagement of the render-time reconstruction (smooth
     // snap-in when a ship field is entered, smooth release when it is left);
     // the previous tick's value is kept so the render pass can interpolate
@@ -1058,8 +1060,53 @@ public class GravityCapabilityImpl implements IGravityCapability {
             capsuleGroundNormal = gravityunbound$rotate(delta, capsuleGroundNormal);
         }
 
+        org.joml.Quaterniond frameDelta = delta;
+        if (!(entity instanceof LivingEntity)) {
+            // A VEHICLE, AN ITEM, A MINECART: its heading IS its yaw, and Valkyrien Skies' dragger
+            // turns that yaw with the ship (compat.VSEntityDraggerMixin lets it, for non-living
+            // riders). So the frame takes only the SWING of the ship's turn - the tilt of the deck
+            // under it - and never the twist about the frame's up: a deck spinning about its up
+            // leaves the frame canonical, and the model is drawn from the yaw alone, which the
+            // clients receive in the ship's own axes and interpolate there. Routing the twist
+            // through the frame (as living riders do, whose look and body yaw normalizeTwist
+            // compensates exactly) left a parked car's yaw a step behind or ahead of its deck
+            // every tick (the owner's car on plating, 2026-09-30: "its model stutters its
+            // rotation").
+            frameDelta = gravityunbound$swingOnly(delta, getUpVector());
+            if (frameDelta.w > 0.99999999) {
+                return;
+            }
+        }
+
         pendingShipDelta = new Quaternionf(
-            (float) delta.x, (float) delta.y, (float) delta.z, (float) delta.w);
+            (float) frameDelta.x, (float) frameDelta.y, (float) frameDelta.z, (float) frameDelta.w);
+    }
+
+    /**
+     * The part of {@code q} that is not a rotation about {@code axis}: {@code q = swing * twist},
+     * the twist being {@code q}'s rotation about the axis (its vector part projected onto the
+     * axis, re-normalized), and this is the swing. A pure rotation about the axis gives the
+     * identity; a quarter-turn twist with a small tilt gives the small tilt.
+     */
+    private static org.joml.Quaterniond gravityunbound$swingOnly(org.joml.Quaterniond q, Vec3 axis) {
+        double len = axis.length();
+        if (!(len > 1.0e-9)) {
+            return new org.joml.Quaterniond(q);
+        }
+        double ax = axis.x / len, ay = axis.y / len, az = axis.z / len;
+        double d = q.x * ax + q.y * ay + q.z * az;
+        org.joml.Quaterniond twist = new org.joml.Quaterniond(ax * d, ay * d, az * d, q.w);
+        if (twist.lengthSquared() < 1.0e-12) {
+            // a half turn exactly about a perpendicular axis: no twist to take out
+            return new org.joml.Quaterniond(q);
+        }
+        twist.normalize();
+        org.joml.Quaterniond swing = new org.joml.Quaterniond(q)
+            .mul(twist.conjugate(new org.joml.Quaterniond())).normalize();
+        if (swing.w < 0) {
+            swing.set(-swing.x, -swing.y, -swing.z, -swing.w);
+        }
+        return swing;
     }
 
     private static Vec3 gravityunbound$rotate(org.joml.Quaterniond rotation, Vec3 v) {
@@ -1107,6 +1154,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
         attachShip = ship;
 
         boolean holdingRide = false;
+        boolean wasPassengerLastTick = this.wasPassenger;
+        this.wasPassenger = passenger;
         if (ship != null) {
             renderAttachShip = ship;
 
@@ -1114,6 +1163,31 @@ public class GravityCapabilityImpl implements IGravityCapability {
             // never re-register them with the standing-entity dragger)
             boolean airborne = !passenger
                 && (useCapsuleCollision() ? !capsuleGrounded : !entity.onGround());
+            // A PASSENGER OF A VEHICLE THE SHIP CARRIES keeps its own dragging record fresh all the
+            // same. VS never drags a passenger (its vehicle seats it), and while it sits there its
+            // record ages past VS's window while the carry the deck last gave it stays recorded.
+            // Getting out, VS's hand-off then pushed the rider by that stale carry (a full tick of
+            // ship motion as velocity: 350 m/s off a ship cruising at 300, a jump off one spinning
+            // at 120 RPM) instead of carrying it on the deck it stepped onto. Kept fresh, the tick
+            // it gets out the dragger carries it and records the real carry.
+            if (passenger && !airborne && gravityunbound$rootVehicleCarriedBy(ship.getId())) {
+                airborne = true;
+                // ... and no stale carry recorded to hand it on the way out
+                org.valkyrienskies.mod.common.util.EntityDraggingInformation seatedInfo = VsTyped.dragInfo(entity);
+                if (seatedInfo != null) {
+                    seatedInfo.setAddedMovementLastTick(new org.joml.Vector3d());
+                }
+            }
+            if (wasPassengerLastTick && !passenger) {
+                // GETTING OUT ONTO THE DECK: VS's dragger notes whether a rider is mounted at the
+                // END of its pass, so on the tick it gets out it still skips the rider, and the
+                // deck moves a whole tick under it before the carry begins: 15 blocks at 300 m/s,
+                // off the deck. Noted here, the rider is carried on the tick it steps out.
+                org.valkyrienskies.mod.common.util.EntityDraggingInformation outInfo = VsTyped.dragInfo(entity);
+                if (outInfo != null) {
+                    outInfo.setMountedToEntity(false);
+                }
+            }
             if (airborne) {
                 // registers the ship (only when it changed), restarts VS's
                 // 25-tick window and clears its ship-change impulse flag; and
@@ -1142,6 +1216,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
             renderAttachShip = null;
             attachRotValid = false;
         }
+    }
+
+    /** Whether the vehicle this entity ultimately rides is carried by, or held in the field of, this ship. */
+    private boolean gravityunbound$rootVehicleCarriedBy(long shipId) {
+        Entity root = entity.getRootVehicle();
+        if (root == entity) {
+            return false;
+        }
+        GravityCapabilityImpl rootComp = GravityChangerAPI.getGravityComponentOrNull(root);
+        if (rootComp != null && rootComp.isShipAttachedTo(shipId)) {
+            return true;
+        }
+        ShipRef ridden = ShipEntities.standingOn(root, 25);
+        return ridden != null && ridden.id() == shipId && ShipEntities.isCarried(root);
     }
 
     /**
@@ -3316,7 +3404,16 @@ public class GravityCapabilityImpl implements IGravityCapability {
     }
 
     private boolean shouldAcceptServerSync() {
-        return entity != null && entity.level().isClientSide() && !GCUtil.isClientPlayer(entity);
+        if (entity == null || !entity.level().isClientSide() || GCUtil.isClientPlayer(entity)) {
+            return false;
+        }
+        // A vehicle this client drives (the local player's Automobility car, boat, minecart) is
+        // simulated HERE, like the local player's own body: its fields, its ship attachment and
+        // its ride with the ship are computed on this side, or the car the player drives on a
+        // ship's plating was neither held to the deck nor carried with its whole step by this
+        // client, and the server's copy of it (fed from here) was thrown about (the owner's
+        // report of 2026-09-30). Living mounts keep following the server: their AI runs there.
+        return !(entity.isControlledByLocalInstance() && !(entity instanceof LivingEntity));
     }
 
     /**
@@ -3705,6 +3802,26 @@ public class GravityCapabilityImpl implements IGravityCapability {
     /** Whether the entity is attached (see {@link #isShipFieldAnchored()}) to this ship. */
     public boolean isShipAttachedTo(long shipId) {
         return attachShip != null && attachShip.getId() == shipId;
+    }
+
+    /** The id of the ship the entity is attached to, or null. */
+    @Nullable
+    public Long attachedShipId() {
+        org.valkyrienskies.core.api.ships.Ship ship = attachShip;
+        return ship == null ? null : ship.getId();
+    }
+
+    // the game time this vehicle's driver last placed it in its ship's frame (server side; see
+    // network.ShipVehicleMotionPacket): the vanilla vehicle move is skipped while that is fresh
+    private long clientPlacedTick = Long.MIN_VALUE;
+
+    public void noteClientPlaced(long gameTime) {
+        clientPlacedTick = gameTime;
+    }
+
+    /** Whether the driver's ship-frame placement is fresher than the vanilla vehicle move would be. */
+    public boolean clientPlacedRecently(long gameTime) {
+        return clientPlacedTick != Long.MIN_VALUE && gameTime - clientPlacedTick <= 2;
     }
 
     /**

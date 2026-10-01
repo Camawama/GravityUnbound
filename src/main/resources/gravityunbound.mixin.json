@@ -89,6 +89,7 @@
     "client.LevelRendererAccessor",
     "client.LiquidBlockRendererMixin",
     "client.LocalPlayerEntityMixin",
+    "client.LocalPlayerVehicleMotionMixin",
     "client.ParticleEngineMixin",
     "client.ParticleMixin",
     "client.PlayerRendererMixin",

@@ -36,6 +36,28 @@ public abstract class GameRendererMixin {
     @Final
     Minecraft minecraft;
 
+    /**
+     * Passengers of a vehicle a ship carries ride the ship's DRAWN pose like the vehicle itself
+     * (see {@link net.camacraft.gravityunbound.client.PassengerRide}). After VS's own hook at the
+     * head of this method (it updates the ships' render transforms and rides the carried
+     * entities), before the level is drawn; put back at the end of the frame.
+     */
+    @Inject(
+        method = "render",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(FJLcom/mojang/blaze3d/vertex/PoseStack;)V"
+        )
+    )
+    private void gravityunbound$ridePassengers(float partialTick, long nanos, boolean renderLevel, CallbackInfo ci) {
+        net.camacraft.gravityunbound.client.PassengerRide.before(this.minecraft, partialTick);
+    }
+
+    @Inject(method = "render", at = @At("TAIL"))
+    private void gravityunbound$restorePassengers(float partialTick, long nanos, boolean renderLevel, CallbackInfo ci) {
+        net.camacraft.gravityunbound.client.PassengerRide.after();
+    }
+
     @Inject(
         method = "renderLevel",
         at = @At(

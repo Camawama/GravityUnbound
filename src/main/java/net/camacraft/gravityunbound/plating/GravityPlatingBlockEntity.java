@@ -1284,6 +1284,26 @@ public class GravityPlatingBlockEntity extends BlockEntity
         return null;
     }
 
+    /** The pull of the side whose primary column holds {@code pos}, as a multiple of vanilla's gravity. */
+    @Override
+    public double strengthAt(BlockPos pos, net.camacraft.gravityunbound.util.GravityFieldLookup.Kind kind) {
+        if (sideData == null) {
+            return 1.0;
+        }
+        Vec3 center = Vec3.atCenterOf(pos);
+        for (Direction plateDir : Direction.values()) {
+            SideData sideDatum = sideData[plateDir.ordinal()];
+            if (sideDatum == null
+                || !net.camacraft.gravityunbound.util.FieldTargets.has(sideDatum.targets, kind)) {
+                continue;
+            }
+            if (sideDatum.getPrimaryBox(worldPosition, plateDir, getLevel()).contains(center)) {
+                return sideDatum.gravityAccel / GravityCapabilityImpl.BASE_GRAVITY_ACCEL;
+            }
+        }
+        return 1.0;
+    }
+
     @Override
     public void invalidateEntityCache() {
         cachedEntities = null;

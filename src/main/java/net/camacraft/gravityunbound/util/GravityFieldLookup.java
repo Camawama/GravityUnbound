@@ -63,6 +63,15 @@ public final class GravityFieldLookup {
         int sourcePriority();
 
         /**
+         * How hard the field pulls at {@code pos}, as a multiple of vanilla's gravity (a
+         * plating side set weaker or stronger than the world's); 1.0 by default. Only asked
+         * where {@link #downAt} answered.
+         */
+        default double strengthAt(BlockPos pos, Kind kind) {
+            return 1.0;
+        }
+
+        /**
          * RADIAL fields (gravity cores) render settled, supported fluid as
          * a FLUSH full-height skin hugging the mass ("planet skin") —
          * planar fields (plates, normalizers) keep vanilla level-height
@@ -332,6 +341,22 @@ public final class GravityFieldLookup {
     public static Direction fluidDownAt(@Nullable BlockGetter getter, BlockPos pos) {
         Best best = bestFluidFieldAt(getter, pos);
         return best != null ? best.down() : Direction.DOWN;
+    }
+
+    /**
+     * How hard the dominant field at {@code pos} pulls fluids there, as a multiple of vanilla's
+     * gravity; 1.0 outside all fields (the caller falls back to the ambient strength). Camafy's
+     * {@code GravityProvider.strengthAt}, for Flow Fun!'s dense liquids that pour fast under a
+     * strong field and light ones that drift.
+     */
+    public static double fluidStrengthAt(@Nullable BlockGetter getter, BlockPos pos) {
+        Best best = bestFluidFieldAt(getter, pos);
+        return best != null ? best.source().strengthAt(pos, Kind.FLUID) : 1.0;
+    }
+
+    /** Whether the dominant fluid field at {@code pos} is one at all (so a strength answer is a field's, not the ambient). */
+    public static boolean hasFluidFieldAt(@Nullable BlockGetter getter, BlockPos pos) {
+        return bestFluidFieldAt(getter, pos) != null;
     }
 
     /**

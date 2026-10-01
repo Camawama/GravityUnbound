@@ -5,10 +5,12 @@ import net.camacraft.camafy.compat.gravity.GravityFrame;
 import net.camacraft.camafy.compat.gravity.GravityProvider;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
+import net.camacraft.gravityunbound.util.GravityFieldLookup;
 import net.camacraft.gravityunbound.config.GravityConfig;
 import net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment;
 import net.camacraft.gravityunbound.util.DimensionGravity;
 import net.camacraft.gravityunbound.util.RotationUtil;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
@@ -141,6 +143,30 @@ public final class GuGravityProvider implements GravityProvider {
     }
 
     /**
+     * Which way a liquid falls at a block position (Camafy's {@code LiquidGravity}, Flow Fun!):
+     * the dominant field there as the fluid hooks already see it ({@link GravityFieldLookup#fluidDownAt}:
+     * plating, cores and normalizers in the position's own grid, and ship-mounted fields over the
+     * world's liquids when the config allows), DOWN outside every field or with
+     * {@code gravityAffectsFluids} off. Cached per tick, never loads chunks.
+     */
+    @Override
+    public Direction directionAt(Level level, BlockPos pos) {
+        return GravityFieldLookup.fluidDownAt(level, pos);
+    }
+
+    /**
+     * How hard gravity pulls a liquid at a block position: the covering field's own pull (a
+     * plating side's {@code gravityAccel} over vanilla's), else the ambient strength.
+     */
+    @Override
+    public double strengthAt(Level level, BlockPos pos) {
+        if (GravityFieldLookup.hasFluidFieldAt(level, pos)) {
+            return GravityFieldLookup.fluidStrengthAt(level, pos);
+        }
+        return ambientStrength(level, Vec3.atCenterOf(pos));
+    }
+
+    /**
      * EntityMixin's move() transform, gate included: the identity while the frame is visually
      * default (GravityChangerAPI.movementToWorld lacks that gate and would rotate by the sub-0.1
      * degree residual that Entity.move ignores), projectiles in world axes, the original entity
@@ -203,8 +229,13 @@ public final class GuGravityProvider implements GravityProvider {
         }
         long now = entity.level().getGameTime();
         long sincePlating = now - comp.lastPlatingFieldTick;
+        // A vehicle another client drives (an Automobility car on the plating) is placed on the
+        // server from its driver's packets, never moved down onto the deck by the server itself, so
+        // vanilla's onGround stays false for it; the field it is attached to holds it all the same.
+        boolean held = entity.onGround()
+            || (!(entity instanceof net.minecraft.world.entity.player.Player) && comp.isShipAttached());
         if (comp.lastPlatingFieldTick != Long.MIN_VALUE && sincePlating >= 0 && sincePlating <= PLATING_HOLD_TICKS
-                && entity.onGround()) {
+                && held) {
             return true;
         }
         return comp.clingHeldLastTick && entity instanceof LivingEntity living && SurfaceClingEnchantment.isWearing(living);

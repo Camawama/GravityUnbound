@@ -215,7 +215,12 @@ public abstract class VSEntityDraggerMixin {
     }
 
     private static boolean gravityunbound$carriesWholeStep(Entity entity) {
-        if (!entity.level().isClientSide() || !entity.isControlledByLocalInstance()) {
+        // the side that moves the body: a player's own client; a mob or a parked vehicle's server;
+        // a driven vehicle's driver (its client)
+        boolean ownBody = entity instanceof Player
+            ? entity.level().isClientSide() && entity.isControlledByLocalInstance()
+            : entity.isControlledByLocalInstance();
+        if (!ownBody) {
             return false;
         }
         GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
@@ -237,9 +242,13 @@ public abstract class VSEntityDraggerMixin {
         // to its riders) — and moves the twist into yaw itself with exact
         // compensation when the frame is settled. Suppress VS's yaw entirely
         // so nothing double-turns.
-        if (comp.isShipAttached()) {
+        if (comp.isShipAttached() && entity instanceof LivingEntity) {
             return currentYaw;
         }
+        // A NON-LIVING rider (a car, a boat, an item) attached to the ship keeps VS's yaw: its
+        // frame takes only the swing of the ship's turn (GravityCapabilityImpl.applyShipAttachCarry),
+        // so the twist has to reach its heading here, projected onto the frame's up like any other
+        // rotated frame's. An upright frame gets VS's value exactly.
         if (comp.isVisuallyDefault()) {
             return newYaw;
         }

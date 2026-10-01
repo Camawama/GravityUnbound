@@ -43,6 +43,47 @@ public abstract class ServerGamePacketListenerImplMixin {
     @Shadow
     private double lastGoodZ;
 
+    @Shadow
+    private boolean clientVehicleIsFloating;
+
+    /**
+     * A VEHICLE ITS DRIVER PLACED IN THE SHIP'S FRAME NEEDS NO VANILLA MOVE. The driver's client
+     * reports the car, boat or minecart it drives on a ship in the ship's own frame
+     * ({@code network.ShipVehicleMotionPacket}), and that placement is exact by the server's own
+     * ship pose. The vanilla vehicle move packet that follows it carries the client's WORLD
+     * position, a tick of ship motion behind, so the server's re-simulation rejected it ("moved
+     * wrongly") and sent the client a correction that snapped the vehicle about (the owner's car
+     * flung off plating, 2026-09-30). While the ship-frame placement is fresh, the vanilla move
+     * is skipped: its position is stale and its checks are meaningless for a body the ship
+     * carries. The floating-vehicle kick is stood down for it, as the deck is its floor. Only on
+     * the server thread: off it, vanilla's own re-queue must still run.
+     */
+    @org.spongepowered.asm.mixin.injection.Inject(
+        method = "handleMoveVehicle",
+        at = @At("HEAD"),
+        cancellable = true
+    )
+    private void gravityunbound$skipMoveOfShipPlacedVehicle(
+        net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket packet,
+        org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci
+    ) {
+        net.minecraft.server.MinecraftServer server = this.player.getServer();
+        if (server == null || !server.isSameThread()) {
+            return;
+        }
+        net.minecraft.world.entity.Entity vehicle = this.player.getRootVehicle();
+        if (vehicle == this.player) {
+            return;
+        }
+        net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl comp =
+            GravityChangerAPI.getGravityComponentOrNull(vehicle);
+        if (comp == null || !comp.clientPlacedRecently(this.player.level().getGameTime())) {
+            return;
+        }
+        this.clientVehicleIsFloating = false;
+        ci.cancel();
+    }
+
 //    @Redirect(
 //            method = "onPlayerMove",
 //            at = @At(

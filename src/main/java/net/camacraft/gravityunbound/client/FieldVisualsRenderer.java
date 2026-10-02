@@ -62,11 +62,52 @@ public final class FieldVisualsRenderer {
     /** The 26 fixed radial spoke directions for core flow. */
     private static final Vec3[] SPOKES = buildSpokes();
 
+    /** Diagnostics (read by the pack harness): render passes seen, and the fields drawn in the last one. */
+    public static volatile int debugPasses, debugPlatesDrawn, debugCoresDrawn;
+    /** Diagnostics: a {@link RenderLevelStageEvent.Stage} field name to draw at instead (null: the default). */
+    public static volatile String debugStage;
+    /** Diagnostics: draw with RenderSystem's model-view stack reset to identity. */
+    public static volatile boolean debugResetModelView;
+    /** Diagnostics: draw with vanilla's {@code RenderType.lines()} (item-entity target) instead of the main-target type. */
+    public static volatile boolean debugVanillaLines;
+    /** Diagnostics: draw nothing (a baseline for screenshots). */
+    public static volatile boolean debugSuppress;
+
+    private static RenderLevelStageEvent.Stage stage() {
+        String name = debugStage;
+        if (name != null) {
+            try {
+                return (RenderLevelStageEvent.Stage) RenderLevelStageEvent.Stage.class.getField(name).get(null);
+            } catch (ReflectiveOperationException e) {
+                // fall through to the default
+            }
+        }
+        return RenderLevelStageEvent.Stage.AFTER_PARTICLES;
+    }
+
     @SubscribeEvent
     public static void onRenderLevel(RenderLevelStageEvent event) {
-        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_PARTICLES) {
+        if (event.getStage() != stage() || debugSuppress) {
             return;
         }
+        debugPasses++;
+        if (debugResetModelView) {
+            PoseStack modelView = com.mojang.blaze3d.systems.RenderSystem.getModelViewStack();
+            modelView.pushPose();
+            modelView.setIdentity();
+            com.mojang.blaze3d.systems.RenderSystem.applyModelViewMatrix();
+            try {
+                draw(event);
+            } finally {
+                modelView.popPose();
+                com.mojang.blaze3d.systems.RenderSystem.applyModelViewMatrix();
+            }
+            return;
+        }
+        draw(event);
+    }
+
+    private static void draw(RenderLevelStageEvent event) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level == null) {
@@ -83,7 +124,8 @@ public final class FieldVisualsRenderer {
         float phase = ((level.getGameTime() % (long) PERIOD) + event.getPartialTick()) / PERIOD;
 
         MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
+        RenderType lineType = debugVanillaLines ? RenderType.lines() : FieldLineRenderType.LINES;
+        VertexConsumer lines = buffers.getBuffer(lineType);
 
         for (FieldVisuals.PlateField field : FieldVisuals.PLATES.values()) {
             poseStack.pushPose();
@@ -129,7 +171,9 @@ public final class FieldVisualsRenderer {
 
         drawCoreIntersections(poseStack, lines, cam, phase, coreList);
 
-        buffers.endBatch(RenderType.lines());
+        buffers.endBatch(lineType);
+        debugPlatesDrawn = FieldVisuals.PLATES.size();
+        debugCoresDrawn = coreList.size();
     }
 
     private record OtherCore(Vec3 center, double range) {}

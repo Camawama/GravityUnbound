@@ -2609,10 +2609,21 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 GravityChangerAPI.getGravityComponentOrNull(ridden);
             if (riddenComp != null) {
                 Quaternionf wasRiding = new Quaternionf(visualRotation);
+                // RIDING WITH THE SHIP (the owner's report of 2026-10-01: seated in a car on the plating of a fast
+                // Clockwork rotor, the camera stuttered and the player stopped facing the car's forward, worse the
+                // faster it spun). A vehicle held to a ship takes the ship's whole turn into its frame every tick
+                // (applyShipAttachCarry). The rider wears that frame, and the step below used to be compensated in
+                // full -- the ship's turn included -- so the rider's look was held fixed in the WORLD while the car
+                // turned with the rotor under it: 72 degrees a tick at 240 RPM, also too big to sweep (atomic below),
+                // so the view stepped once a tick. The ship's turn is not the rider's to cancel: like a standing
+                // rider's, its view turns with the deck. So the old frame is carried through the same turn first,
+                // and only what is left (the vehicle's own tilt toward its field, a re-parametrization) is
+                // compensated -- for a vehicle simply riding the rotor, nothing.
+                Quaternionf carriedFrom = gravityunbound$carriedWithVehicle(riddenComp, wasRiding);
                 visualTarget.set(riddenComp.getVisualRotation());
                 visualRotation.set(visualTarget);
                 lastChaseTarget.set(visualTarget);
-                if (!wasRiding.equals(visualRotation)) {
+                if (!carriedFrom.equals(visualRotation)) {
                     // The vehicle's frame stepped. Carry the rider's look with
                     // it so the world-space view direction is unchanged -- and
                     // SWEEP that carry across the tick instead of collapsing
@@ -2657,7 +2668,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                     // anything past 45 is a re-parametrization rather than
                     // motion.
                     boolean atomicStep =
-                        angleBetween(wasRiding, visualRotation) > (float) Math.toRadians(45);
+                        angleBetween(carriedFrom, visualRotation) > (float) Math.toRadians(45);
                     if (atomicStep) {
                         // FROM THE VEHICLE'S OWN START, not from the rider's
                         // finish. Collapsing onto visualRotation pinned the rider
@@ -2687,7 +2698,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                         headOWas = beforeLiving.yHeadRotO;
                     }
 
-                    compensateFrameChange(wasRiding, visualRotation);
+                    compensateFrameChange(carriedFrom, visualRotation);
 
                     if (!atomicStep
                         && Math.abs(Mth.wrapDegrees(entity.getYRot() - yawWas)) > 1.0E-4f) {
@@ -3256,6 +3267,39 @@ public class GravityCapabilityImpl implements IGravityCapability {
             pc.lastChaseTarget.premul(twistDelta).normalize();
             pc.compensateFrameChange(riderOld, pc.visualRotation);
         }
+    }
+
+    /**
+     * The rider's frame of last tick carried through the turn its vehicle's ship made this tick (the same
+     * rotation {@link #applyShipAttachCarry()} composed onto the vehicle's frame), or the frame itself when the
+     * vehicle rides no ship. Passengers tick after their vehicle, so the two read the same pair of poses.
+     */
+    private Quaternionf gravityunbound$carriedWithVehicle(GravityCapabilityImpl vehicleComp, Quaternionf frame) {
+        Quaternionf out = new Quaternionf(frame);
+        org.valkyrienskies.core.api.ships.Ship ship = vehicleComp.attachShip;
+        if (ship == null) {
+            return out;
+        }
+        if (attachShip != null && attachShip.getId() == ship.getId()) {
+            // the rider is attached to the same ship itself (seated under a field of its own): applyShipAttachCarry
+            // already carried its frame this tick
+            return out;
+        }
+        org.joml.Quaterniond now = VsTyped.rotation(ship, ShipRef.Pose.TICK);
+        org.joml.Quaterniond prev = VsTyped.rotation(ship, ShipRef.Pose.PREV_TICK);
+        if (now == null || prev == null) {
+            return out;
+        }
+        org.joml.Quaterniond delta = now.mul(prev.conjugate(), new org.joml.Quaterniond()).normalize();
+        if (delta.w < 0) {
+            delta.set(-delta.x, -delta.y, -delta.z, -delta.w);
+        }
+        if (delta.w > 0.99999999) {
+            return out;
+        }
+        // the frame maps world -> local, so a world rotation S composes as frame * S^-1 (as in advanceVisualRotation)
+        Quaternionf conj = new Quaternionf((float) delta.x, (float) delta.y, (float) delta.z, (float) delta.w).conjugate();
+        return out.mul(conj).normalize();
     }
 
     private void compensateFrameChange(Quaternionf oldFrame, Quaternionf newFrame) {
@@ -5074,6 +5118,21 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * hot paths: writes into {@code dest} and returns it. Render thread only.
      */
     public Quaternionf getRenderRotation(float partialTick, Quaternionf dest) {
+        // A RIDER IS DRAWN IN ITS VEHICLE'S FRAME, FRAME BY FRAME. It wears that frame tick by tick (the passenger
+        // branch of advanceVisualRotation), but drawing it from its own two tick frames, interpolated in the world,
+        // put the camera on a different arc from the car's: the car is drawn against the ship's DRAWN pose (the
+        // ship-relative reconstruction below), a rider of a car on a fast rotor was not, and the two parted by a
+        // fraction of a tick of spin every frame (the stutter in the owner's report of 2026-10-01). Taking the
+        // vehicle's own render frame makes the rider's camera and model turn with the car exactly.
+        // Only for a vehicle held to a ship by its own field while the rider is not (a car on plating): a rider seated
+        // under a field of its own (Valkyrien Skies' seats, see updateMountedOnShipGravity) keeps its own reconstruction.
+        Entity riddenVehicle = entity.getVehicle();
+        if (riddenVehicle != null && !(riddenVehicle instanceof LivingEntity) && attachShip == null) {
+            GravityCapabilityImpl riddenComp = GravityChangerAPI.getGravityComponentOrNull(riddenVehicle);
+            if (riddenComp != null && riddenComp != this && riddenComp.attachShip != null) {
+                return riddenComp.getRenderRotation(partialTick, dest);
+            }
+        }
         if (prevVisualRotation.equals(visualRotation)) {
             dest.set(visualRotation);
         }

@@ -98,4 +98,79 @@ public class ClaimGameTests {
             helper.succeed();
         });
     }
+    /**
+     * The owner's report of 2026-10-02: a car on plating on a moving ship was let go by its ship on every hop. MKW
+     * claims six aspects of a free-roam kart as its driver and excuses a launch arc from Full Stop's impacts with the
+     * seventh under a second owner: together every aspect, but nobody holds the kart. A boat in a sideways field
+     * claimed that way stays the field's (not held); claimed by one owner outright (the physgun's beam) it is held.
+     */
+    @GameTest(template = EMPTY, timeoutTicks = 200, batch = EntityObstacleGameTests.BATCH)
+    public static void claimsThatOnlyAddUpToEveryAspectAreNotAHold(GameTestHelper helper) {
+        for (int x = 2; x <= 16; x++) {
+            for (int z = 2; z <= 16; z++) {
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE.defaultBlockState());
+            }
+        }
+        BlockState plating = GravityBlocks.GRAVITY_PLATING.get().defaultBlockState()
+            .setValue(GravityPlatingBlock.directionToProperty(Direction.WEST), true);
+        for (int y = 2; y <= 7; y++) {
+            for (int z = 3; z <= 12; z++) {
+                helper.setBlock(new BlockPos(4, y, z), plating);
+            }
+        }
+        ResourceLocation driver = new ResourceLocation("gravityunbound_test", "driver");
+        ResourceLocation excuse = new ResourceLocation("gravityunbound_test", "launch_excuse");
+        net.minecraft.world.entity.vehicle.Boat boat = new net.minecraft.world.entity.vehicle.Boat(
+            helper.getLevel(), 0, 0, 0);
+        Vec3 at = helper.absoluteVec(new Vec3(4.9, 4.0, 7.5));
+        boat.moveTo(at.x, at.y, at.z, 0.0F, 0.0F);
+        boat.setNoGravity(true);
+        helper.getLevel().addFreshEntity(boat);
+        int[] phase = {0};
+        boolean[] heldWhileSummed = {false};
+        boolean[] heldWhileOutright = {false};
+        helper.onEachTick(() -> {
+            if (phase[0] == 0) {
+                PhysicsOwnership.claim(boat, driver, PhysicsAspect.ALL & ~PhysicsAspect.IMPACT.bit, 5);
+                PhysicsOwnership.claim(boat, excuse, PhysicsAspect.IMPACT.bit, 5);
+            } else {
+                PhysicsOwnership.claim(boat, HOLDER, PhysicsAspect.ALL, 5);
+            }
+            boolean held = foreignHold(boat);
+            if (phase[0] == 0 && held) heldWhileSummed[0] = true;
+            if (phase[0] == 1 && held) heldWhileOutright[0] = true;
+        });
+        helper.runAfterDelay(40, () -> {
+            PhysicsOwnership.release(boat, driver);
+            PhysicsOwnership.release(boat, excuse);
+            phase[0] = 1;
+        });
+        helper.runAfterDelay(80, () -> {
+            GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(boat);
+            LOGGER.info("[GravityUnbound/test] summed claims held={}, one owner's held={}, up {}",
+                heldWhileSummed[0], heldWhileOutright[0], comp == null ? null : comp.getUpVector());
+            if (comp == null) {
+                helper.fail("the boat has no gravity component");
+            }
+            if (heldWhileSummed[0]) {
+                helper.fail("two owners' claims adding up to every aspect were taken for a hold");
+            }
+            if (!heldWhileOutright[0]) {
+                helper.fail("one owner claiming every aspect wasn't taken for a hold (the test's boat isn't ticked?)");
+            }
+            helper.succeed();
+        });
+    }
+
+    private static boolean foreignHold(net.minecraft.world.entity.Entity entity) {
+        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
+        if (comp == null) return false;
+        try {
+            java.lang.reflect.Field f = GravityCapabilityImpl.class.getDeclaredField("foreignHold");
+            f.setAccessible(true);
+            return f.getBoolean(comp);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }

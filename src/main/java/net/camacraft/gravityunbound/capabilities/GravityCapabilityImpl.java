@@ -125,11 +125,16 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // (Entity.move's SELF rotation, movementToWorld / worldToMovement) and stands down from the rest (see tick()).
     //   foreignMotion: another owner claims MOTION. No velocity edits: the field's pull, friction, the transition
     //                  pull, the idle anchor (all of them living bodies' only).
-    //   foreignHold:   another owner holds the body outright (every aspect: Physgun Unbound's beam, an MKW race), or
-    //                  moves a living one (Physgun's freeze). Also no attachment to a ship, no carry with it, no
-    //                  re-registration with VS's dragging and no pushing out of blocks.
+    //   foreignHold:   ONE other owner holds the body outright, every aspect by itself (Physgun Unbound's beam, an
+    //                  MKW race: Camafy's heldOutrightByOther), or moves a living one (Physgun's freeze). Also no
+    //                  attachment to a ship, no carry with it, no re-registration with VS's dragging and no pushing
+    //                  out of blocks.
     // A vehicle another mod drives (MKW's free-roam karts claim MOTION and everything but IMPACT) keeps riding the
-    // field it is in: MKW drives it in Gravity Unbound's frame and relies on the ship carrying that frame.
+    // field it is in: MKW drives it in Gravity Unbound's frame and relies on the ship carrying that frame. That holds
+    // on a hop too: MKW excuses a launch arc from Full Stop's impacts with IMPACT under a second owner, and the two
+    // owners' claims add up to every aspect without either holding the kart. Reading the sum as a hold (until
+    // 2026-10-02) let go of the car's ship on every hop: on plating in the Great Unknown it turned about by the twist
+    // it dropped and floated off the deck.
     private static final net.minecraft.resources.ResourceLocation OWNER =
         new net.minecraft.resources.ResourceLocation("gravityunbound", "field");
     private boolean foreignMotion;
@@ -724,7 +729,8 @@ public class GravityCapabilityImpl implements IGravityCapability {
         boolean foreignBefore = foreignHold;
         int foreignClaims = PhysicsOwnership.any() ? PhysicsOwnership.claimsExcept(entity, OWNER) : 0;
         foreignMotion = net.camacraft.camafy.physics.PhysicsAspect.MOTION.in(foreignClaims);
-        foreignHold = foreignClaims == net.camacraft.camafy.physics.PhysicsAspect.ALL
+        foreignHold = (foreignClaims == net.camacraft.camafy.physics.PhysicsAspect.ALL
+                && PhysicsOwnership.heldOutrightByOther(entity, OWNER))
             || (foreignMotion && entity instanceof LivingEntity);
         if (foreignHold && !foreignBefore && attachShip != null) {
             // taken over while riding a ship (the physgun lifting a mob off plating): the ship lets go now, and hands
@@ -4406,10 +4412,27 @@ public class GravityCapabilityImpl implements IGravityCapability {
 
                         }
                     }
-                    else {
+                    else if (attachShip == null || entity instanceof LivingEntity) {
                         compensateFrameChange(
                             transported,
                             RotationUtil.getWorldRotationQuaternion(currGravityDirection));
+                    }
+                    else {
+                        // A PARKED CAR (or any non-living body nobody rides) ATTACHED TO A SHIP: its frame never snaps
+                        // to the new cardinal. It carries the ship's whole turn, twist included (applyShipAttachCarry),
+                        // and its yaw is the heading IN that frame, which the clients rebuild from the frame in the
+                        // ship's coordinates and that yaw. The re-expression above assumes the frame jumped from the
+                        // old cardinal to the new one; applied here it turned the car on the deck by the crossing's
+                        // twist, 180 or 90 degrees in one tick, every time the deck's down passed between two world
+                        // axes (the owner's video of 2026-10-02: a small ship rolling end over end in the great
+                        // unknown, the parked car flipping round twice a turn; harness owner_car, car_roll_*). The
+                        // heading stays as it is. Only the local velocity changes reference: it moves in the cardinal
+                        // frame (getMovementRotation), which did jump, while the deck under it only turned by this
+                        // tick's share of the ship's spin, so the world velocity is kept exactly (read as it was in
+                        // the old cardinal, a coasting car's motion swung by the crossing and could lift it off the
+                        // deck).
+                        Vec3 worldVelocity = RotationUtil.vecPlayerToWorld(entity.getDeltaMovement(), from);
+                        entity.setDeltaMovement(RotationUtil.vecWorldToPlayer(worldVelocity, currGravityDirection));
                     }
                 }
             }

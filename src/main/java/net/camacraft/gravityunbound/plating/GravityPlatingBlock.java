@@ -49,7 +49,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * Based on code from AmethystGravity (by CyborgCabbage)
  */
 public class GravityPlatingBlock extends BaseEntityBlock
-    implements net.minecraft.world.level.block.LiquidBlockContainer, net.minecraft.world.level.block.BucketPickup {
+    implements net.minecraft.world.level.block.LiquidBlockContainer, net.minecraft.world.level.block.BucketPickup,
+        net.camacraft.camafy.liquid.logging.FluidLogHost {
     // in a corner, multiple faces of plates can occupy the same block
     
     public static final BooleanProperty NORTH = BlockStateProperties.NORTH;
@@ -64,7 +65,10 @@ public class GravityPlatingBlock extends BaseEntityBlock
     // level: 0 = dry, 1-7 flowing, 8 = source (or full falling when
     // WATER_FALLING). The LAVA flag retypes the stored fluid to lava
     // ("lava-logging"); the property names keep their water_ prefix for
-    // save compatibility with worlds from before lava support.
+    // save compatibility with worlds from before lava support. Any other
+    // liquid Camafy can fluid-log (Flow Fun's) is stored as water of the
+    // same level, and Camafy's fluid-logging record says which liquid it is:
+    // every lookup by position answers that liquid (Camafy 0.1.22).
     // FlowingFluid's tick updates these through the container-preservation
     // hook in FlowingFluidMixin instead of replacing the plate.
     public static final net.minecraft.world.level.block.state.properties.IntegerProperty WATER_LEVEL =
@@ -156,12 +160,17 @@ public class GravityPlatingBlock extends BaseEntityBlock
         return type.getFlowing(fluidLevel, falling);
     }
 
-    /** Encodes a water or lava fluid state into the plate's fluid properties. */
+    /**
+     * Encodes a water or lava fluid state into the plate's fluid properties; a liquid Camafy can
+     * fluid-log is encoded as water (its record, set by whoever puts it here, says which liquid).
+     */
     public static BlockState withFluid(BlockState state, net.minecraft.world.level.material.FluidState fluid) {
         boolean lava = !fluid.isEmpty()
             && fluid.getType().isSame(net.minecraft.world.level.material.Fluids.LAVA);
-        if (!lava && (fluid.isEmpty()
-            || !fluid.getType().isSame(net.minecraft.world.level.material.Fluids.WATER))) {
+        boolean waterEncoded = !fluid.isEmpty()
+            && (fluid.getType().isSame(net.minecraft.world.level.material.Fluids.WATER)
+                || net.camacraft.camafy.liquid.logging.FluidLogging.canLog(fluid.getType()));
+        if (!lava && !waterEncoded) {
             return state.setValue(WATER_LEVEL, 0).setValue(WATER_FALLING, false).setValue(LAVA, false);
         }
         int amount = fluid.isSource() ? 8 : fluid.getAmount();
@@ -180,10 +189,22 @@ public class GravityPlatingBlock extends BaseEntityBlock
         // other — the two don't mix inside a plate cell, the stored fluid
         // must drain (or be picked up) before the other can enter.
         boolean lava = fluid.isSame(net.minecraft.world.level.material.Fluids.LAVA);
-        if (!lava && !fluid.isSame(net.minecraft.world.level.material.Fluids.WATER)) {
+        boolean water = fluid.isSame(net.minecraft.world.level.material.Fluids.WATER);
+        // any liquid Camafy can fluid-log (Flow Fun's), source or flowing, like water
+        boolean logged = !lava && !water && net.camacraft.camafy.liquid.logging.FluidLogging.canLog(fluid);
+        if (!lava && !water && !logged) {
             return false;
         }
-        return state.getValue(WATER_LEVEL) == 0 || state.getValue(LAVA) == lava;
+        if (state.getValue(WATER_LEVEL) == 0) {
+            return true;
+        }
+        if (lava || state.getValue(LAVA)) {
+            return lava && state.getValue(LAVA);
+        }
+        // water-encoded content: plain water has no record, a logged liquid has its own
+        net.minecraft.world.level.material.Fluid held =
+            net.camacraft.camafy.liquid.logging.FluidLogging.loggedAt(level, pos);
+        return water ? held == null : held != null && fluid.isSame(held);
     }
 
     @Override
@@ -192,9 +213,24 @@ public class GravityPlatingBlock extends BaseEntityBlock
         if (!canPlaceLiquid(level, pos, state, fluid.getType())) {
             return false;
         }
+        boolean logged = !fluid.isEmpty()
+            && !fluid.getType().isSame(net.minecraft.world.level.material.Fluids.WATER)
+            && !fluid.getType().isSame(net.minecraft.world.level.material.Fluids.LAVA);
+        if (logged) {
+            if (!(level instanceof Level real)) {
+                return false; // a world-generation region has no fluid-logging record
+            }
+            // the record before the block: the update below already reads the liquid
+            net.camacraft.camafy.liquid.logging.FluidLogging.setHostedFluid(real, pos, fluid.getType());
+        }
         BlockState updated = withFluid(state, fluid);
         if (updated != state) {
             level.setBlock(pos, updated, 3);
+        }
+        if (logged) {
+            // the liquid's own tick (it ticks by its own delay; the level answers the liquid here)
+            level.scheduleTick(pos, fluid.getType(), fluid.getType().getTickDelay(level));
+            return true;
         }
         // schedule the ACTUAL stored fluid type: the fluid ticker validates
         // scheduled ticks with an exact type match (fluidState.is(fluid)),
@@ -212,6 +248,18 @@ public class GravityPlatingBlock extends BaseEntityBlock
         // buckets pick up sources only, like vanilla
         if (state.getValue(WATER_LEVEL) == 8 && !state.getValue(WATER_FALLING)) {
             boolean lava = state.getValue(LAVA);
+            // a fluid-logged liquid comes out as its own bucket (Camafy's record; dropped with the level)
+            net.minecraft.world.level.material.Fluid held = lava ? null
+                : net.camacraft.camafy.liquid.logging.FluidLogging.loggedAt(level, pos);
+            if (held != null) {
+                net.minecraft.world.item.Item bucket = held.getBucket();
+                if (bucket == null || bucket == net.minecraft.world.item.Items.AIR) {
+                    return ItemStack.EMPTY;
+                }
+                level.setBlock(pos, state.setValue(WATER_LEVEL, 0)
+                    .setValue(WATER_FALLING, false).setValue(LAVA, false), 3);
+                return new ItemStack(bucket);
+            }
             level.setBlock(pos, state.setValue(WATER_LEVEL, 0)
                 .setValue(WATER_FALLING, false).setValue(LAVA, false), 3);
             return new ItemStack(lava
@@ -219,6 +267,13 @@ public class GravityPlatingBlock extends BaseEntityBlock
                 : net.minecraft.world.item.Items.WATER_BUCKET);
         }
         return ItemStack.EMPTY;
+    }
+
+    /** Camafy's fluid-logging: the plate holding {@code fluid} at its level (empty drains it), or null. */
+    @Override
+    public @Nullable BlockState withLoggedFluid(BlockState state, net.minecraft.world.level.material.FluidState fluid) {
+        BlockState next = withFluid(state, fluid);
+        return !fluid.isEmpty() && next.getValue(WATER_LEVEL) == 0 ? null : next;
     }
 
     @Override

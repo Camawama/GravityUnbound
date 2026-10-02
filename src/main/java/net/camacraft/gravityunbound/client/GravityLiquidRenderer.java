@@ -151,22 +151,22 @@ public final class GravityLiquidRenderer {
 
         BlockPos downPos = pos.relative(gDown);
         BlockState downState = level.getBlockState(downPos);
-        FluidState downFluid = downState.getFluidState();
+        FluidState downFluid = level.getFluidState(downPos); // by position: a fluid-logged block holds its own liquid
         BlockPos upPos = pos.relative(gUp);
         BlockState upState = level.getBlockState(upPos);
-        FluidState upFluid = upState.getFluidState();
+        FluidState upFluid = level.getFluidState(upPos); // by position: a fluid-logged block holds its own liquid
         BlockPos northPos = pos.relative(gNorth);
         BlockState northState = level.getBlockState(northPos);
-        FluidState northFluid = northState.getFluidState();
+        FluidState northFluid = level.getFluidState(northPos); // by position: a fluid-logged block holds its own liquid
         BlockPos southPos = pos.relative(gSouth);
         BlockState southState = level.getBlockState(southPos);
-        FluidState southFluid = southState.getFluidState();
+        FluidState southFluid = level.getFluidState(southPos); // by position: a fluid-logged block holds its own liquid
         BlockPos westPos = pos.relative(gWest);
         BlockState westState = level.getBlockState(westPos);
-        FluidState westFluid = westState.getFluidState();
+        FluidState westFluid = level.getFluidState(westPos); // by position: a fluid-logged block holds its own liquid
         BlockPos eastPos = pos.relative(gEast);
         BlockState eastState = level.getBlockState(eastPos);
-        FluidState eastFluid = eastState.getFluidState();
+        FluidState eastFluid = level.getFluidState(eastPos); // by position: a fluid-logged block holds its own liquid
 
         // Frame checks for the 6 face neighbors: one fluidDownAt query each
         // (skipped when the neighbor holds no fluid — an empty cell behaves
@@ -511,7 +511,7 @@ public final class GravityLiquidRenderer {
         }
         BlockState below = level.getBlockState(pos.relative(down));
         return below.blocksMotion()
-            || fluidState.getType().isSame(below.getFluidState().getType());
+            || fluidState.getType().isSame(level.getFluidState(pos.relative(down)).getType());
     }
 
     /**
@@ -693,7 +693,7 @@ public final class GravityLiquidRenderer {
         BlockAndTintGetter level, Fluid fluid, BlockPos pos, Direction down, BlockPos cellPos
     ) {
         BlockState state = level.getBlockState(pos);
-        FluidState fluidState = state.getFluidState();
+        FluidState fluidState = level.getFluidState(pos);
         // diagonal corner sample: query the frame here (outside the 6-cache)
         boolean posSameFrame = fluidState.isEmpty() || sameFrame(level, down, pos);
         return getHeight(level, fluid, pos, state, fluidState, down, posSameFrame, cellPos);
@@ -741,7 +741,7 @@ public final class GravityLiquidRenderer {
             // neighbors agree about shared corners)
             BlockPos abovePos = pos.relative(down.getOpposite());
             BlockState above = level.getBlockState(abovePos);
-            FluidState aboveFluid = above.getFluidState();
+            FluidState aboveFluid = level.getFluidState(abovePos);
             boolean fullColumn = fluid.isSame(aboveFluid.getType())
                 && (aboveFluid.isEmpty() || sameFrame(level, down, abovePos)
                     || GravityFieldLookup.fluidDownAt(level, abovePos).getAxis() != down.getAxis());

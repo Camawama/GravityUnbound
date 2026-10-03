@@ -405,9 +405,58 @@ public class GravityPlatingBlockEntity extends BlockEntity
 
     @Override
     public CompoundTag getUpdateTag() {
+        // A chunk packet carries a block entity's data only when its update tag is NOT EMPTY (vanilla's
+        // BlockEntityInfo sends null for an empty one, and the client then never loads its copy). A plate whose sides
+        // were never filled in - set without its item: setBlock, a schematic, a ship assembled before the plate's first
+        // tick - had nothing to save, so a client that got its chunk in that window kept a copy that waited for data
+        // forever (dataInitialized) and held nobody: on that client the ship's whole field was gone. The player stood
+        // there unheld, a parked car looked right only because its frame comes from the server, and a car the player
+        // got into was driven by that client with plain down (harness car_roll_space, about one run in six). The
+        // defaults the server's first tick would fill in go into the packet instead.
+        fillMissingSides();
         CompoundTag tag = new CompoundTag();
         saveAdditional(tag);
         return tag;
+    }
+
+    /**
+     * Server: default side data for every face the block state has and the data lacks, as {@link #refreshCache} fills
+     * in on the first tick (see {@link #getUpdateTag}). Touches nothing but this block entity: it runs while a chunk
+     * packet is being built, possibly off the server thread (C2ME), so the chunk is marked for saving on the plate's next
+     * tick ({@link #defaultsUnsaved}) and nothing is synced. Whether anything was filled.
+     */
+    private boolean fillMissingSides() {
+        Level world = getLevel();
+        if (world == null || world.isClientSide()) {
+            return false;
+        }
+        BlockState state = getBlockState();
+        if (!(state.getBlock() instanceof GravityPlatingBlock)) {
+            return false;
+        }
+        if (sideData == null) {
+            sideData = new SideData[6];
+        }
+        boolean filled = false;
+        for (Direction dir : Direction.values()) {
+            if (GravityPlatingBlock.hasDir(state, dir) && sideData[dir.ordinal()] == null) {
+                sideData[dir.ordinal()] = SideData.createDefault();
+                filled = true;
+            }
+        }
+        if (filled) {
+            invalidateBoxCaches();
+            defaultsUnsaved = true;
+        }
+        return filled;
+    }
+
+    // defaults filled in by getUpdateTag, not yet marked for saving (refreshCache does it on the server thread)
+    private volatile boolean defaultsUnsaved = false;
+
+    /** Whether this copy has authoritative side data (see {@code dataInitialized}); a client copy without it is inert. */
+    public boolean hasData() {
+        return dataInitialized;
     }
 
     public void refreshCache() {
@@ -450,6 +499,11 @@ public class GravityPlatingBlockEntity extends BlockEntity
         // floated or slid off while the server's copy worked. Send them.
         if (filledDefaults && !world.isClientSide()) {
             sync();
+        }
+        else if (defaultsUnsaved && !world.isClientSide()) {
+            // the defaults a chunk packet already carried (getUpdateTag): save them, nothing to send
+            defaultsUnsaved = false;
+            setChanged();
         }
 
         // stagger cache invalidation across plates; floorMod because hashCode may be negative

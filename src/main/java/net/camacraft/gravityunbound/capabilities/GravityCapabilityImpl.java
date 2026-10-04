@@ -120,6 +120,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
     // against the pose the ship is actually DRAWN at.
     @Nullable
     private org.valkyrienskies.core.api.ships.Ship attachShip = null;
+    // The twists a VEHICLE re-parametrized its frame by on game tick reparamTick (frame turned about its own up, yaw
+    // shifted to match: invisible on the vehicle), composed, for its riders to take at once (noteReparamTwist); and
+    // the tick a rider last took one.
+    @Nullable
+    private Quaternionf reparamTwist = null;
+    private long reparamTick = Long.MIN_VALUE;
+    private long reparamAdoptedTick = Long.MIN_VALUE;
 
     // ANOTHER MOD OWNS THE MOTION (Camafy's physics claims): Gravity Unbound keeps the frame as a coordinate system
     // (Entity.move's SELF rotation, movementToWorld / worldToMovement) and stands down from the rest (see tick()).
@@ -2614,6 +2621,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
             GravityCapabilityImpl riddenComp =
                 GravityChangerAPI.getGravityComponentOrNull(ridden);
             if (riddenComp != null) {
+                // The vehicle's re-parametrization this tick (noteReparamTwist), taken AT ONCE: the same twist on the
+                // frame, the rider's yaw (and its interpolation start, compensateFrameChange shifts both) shifted to
+                // match, so frame and yaw move together on the rider as they did on the vehicle. What is left for the
+                // adoption below is the vehicle's real motion (its chase, a ship's turn), smoothed as before.
+                if (riddenComp.reparamTwist != null && riddenComp.reparamTick == entity.level().getGameTime()
+                    && reparamAdoptedTick != riddenComp.reparamTick) {
+                    reparamAdoptedTick = riddenComp.reparamTick;
+                    Quaternionf riderOld = new Quaternionf(visualRotation);
+                    visualRotation.premul(riddenComp.reparamTwist).normalize();
+                    prevVisualRotation.premul(riddenComp.reparamTwist).normalize();
+                    visualTarget.premul(riddenComp.reparamTwist).normalize();
+                    lastChaseTarget.premul(riddenComp.reparamTwist).normalize();
+                    compensateFrameChange(riderOld, visualRotation);
+                }
                 Quaternionf wasRiding = new Quaternionf(visualRotation);
                 // RIDING WITH THE SHIP (the owner's report of 2026-10-01: seated in a car on the plating of a fast
                 // Clockwork rotor, the camera stuttered and the player stopped facing the car's forward, worse the
@@ -3007,6 +3028,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             visualTarget.set(canonical);
             prevVisualRotation.set(canonical);
             compensateFrameChange(old, visualRotation);
+            noteReparamTwist(new Quaternionf(canonical).mul(new Quaternionf(old).conjugate()).normalize());
 
             // THE STORED BOX CHANGES SHAPE HERE, SO REBUILD IT HERE. This snap
             // is what flips useCapsuleCollision() off, and with it what
@@ -3142,6 +3164,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
         prevVisualRotation.premul(delta).normalize();
         visualTarget.premul(delta).normalize();
         compensateFrameChange(old, visualRotation);
+        noteReparamTwist(delta);
         // ...AND TELL THE CLIENT. This method is server-only for anything but
         // the client player, and the yaw half above never reaches the owner of
         // a ridden vehicle's yaw -- the server's own write is overwritten by
@@ -3187,8 +3210,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (!Double.isFinite(total)) {
             return;
         }
-        // The client player owns its own frame and does its own unwinding.
-        if (GCUtil.isClientPlayer(entity)) {
+        // The client player owns its own frame and does its own unwinding, and so does a vehicle the local player
+        // drives (simulatedHere): this client unwinds its twist itself (normalizeTwist runs here for it), so the
+        // server's total is an echo of a re-parametrization this side has already made. Applied on top it turned the
+        // car (and MKW's follow camera with it) by the twist a second time for a moment, until the next frames put it
+        // back: the yaw flick on driving out of a field (the owner's video of 2026-10-03), back since this client
+        // started simulating the car it drives (2026-10-01). Still recorded, so getting out doesn't apply the total.
+        if (simulatedHere()) {
             syncedFrameYawReparam = total;
             return;
         }
@@ -3253,6 +3281,31 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * its own (normalizeTwist is reached only through the tail of
      * advanceVisualRotation, which passengers leave early).
      */
+    /**
+     * Records that this vehicle re-parametrized its frame by {@code delta} (frame := delta * frame, its yaw shifted by
+     * compensateFrameChange) this tick, for its riders to take at once in their own tick (the rider block of
+     * advanceVisualRotation). A vehicle's frame and yaw move together and it is drawn unchanged; a rider adopting the
+     * new frame in the usual way took the matching yaw shift spread over the tick (only a step over 45 degrees counts
+     * as atomic) while the twisted frame was drawn at once, so for one tick the rider, and MKW's follow camera with
+     * it, swung away from the car by the whole twist and slid back. Reported from play (2026-10-03) as the car and the
+     * camera turning for a moment and snapping back while the player model kept facing forward, on driving out of a
+     * field (harness car_field_exit, the lane that steers inside the field: 14.9 degrees in one frame). Since
+     * 2026-10-01 the client unwinds the car it drives itself (normalizeTwist), so this happens on the client, not
+     * only on the server's packets (syncFrameYawReparam, which re-parametrizes its riders directly).
+     */
+    private void noteReparamTwist(Quaternionf delta) {
+        if (entity == null || entity instanceof LivingEntity) {
+            return;
+        }
+        long now = entity.level().getGameTime();
+        if (reparamTick != now || reparamTwist == null) {
+            reparamTwist = new Quaternionf(delta);
+            reparamTick = now;
+        } else {
+            reparamTwist.premul(delta).normalize();
+        }
+    }
+
     private void reparametrizePassengers(Quaternionf oldFrame, Quaternionf twistDelta) {
         if (entity == null || entity instanceof LivingEntity) {
             return;
@@ -3586,6 +3639,14 @@ public class GravityCapabilityImpl implements IGravityCapability {
     private static float angleBetween(Quaternionf a, Quaternionf b) {
         float dot = Math.abs(a.x() * b.x() + a.y() * b.y() + a.z() * b.z() + a.w() * b.w());
         return (float) (2.0 * Math.acos(Mth.clamp(dot, 0.0f, 1.0f)));
+    }
+
+    /**
+     * Whether THIS side computes this entity's gravity: the client player, or a vehicle the local player drives (see
+     * {@link #shouldAcceptServerSync}). Server packets about it are echoes of what this side already did or sent.
+     */
+    private boolean simulatedHere() {
+        return entity != null && entity.level().isClientSide() && !shouldAcceptServerSync();
     }
 
     private boolean shouldAcceptServerSync() {
@@ -4409,6 +4470,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                             // compensation cancel identically, at every partial
                             // tick.
                             compensateFrameChange(old, visualRotation);
+                            noteReparamTwist(delta);
 
                         }
                     }
@@ -4586,9 +4648,13 @@ public class GravityCapabilityImpl implements IGravityCapability {
             currentGravityDirection.x, currentGravityDirection.y, currentGravityDirection.z
         );
 
-        if (GCUtil.isClientPlayer(entity)) {
-            // The client player computes its own gravity from fields; only adopt
+        if (simulatedHere()) {
+            // The client player computes its own gravity from fields, and so does a vehicle the local player drives
+            // (simulatedHere, since 2026-10-01); only adopt
             // the server's direction on a PERSISTENT disagreement (true desync).
+            // For the driven vehicle this used to take every packet: at a field's edge the server's direction, a
+            // couple of ticks behind, flipped the client's back for a tick and its own computation flipped it again,
+            // each flip turning the frame and the yaw with it (the flick on leaving a field).
             // The server's field state lags the client by a couple of ticks, so
             // near 45-degree field regions single packets flip-flop — adopting
             // each one flipped the canonical frame back and forth (visible

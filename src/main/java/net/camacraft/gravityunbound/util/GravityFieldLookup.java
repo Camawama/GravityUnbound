@@ -114,6 +114,10 @@ public final class GravityFieldLookup {
         // sources living in a ship's grid: only when any exist do WORLD
         // fluid queries look across grids (see fluidDownAt)
         final java.util.Set<BlockPos> shipSources = ConcurrentHashMap.newKeySet();
+        // counts every change of shipSources, so the per-tick list of
+        // field-carrying ships (fieldShips) is rebuilt the moment one changes
+        final java.util.concurrent.atomic.AtomicInteger shipSourcesVersion =
+            new java.util.concurrent.atomic.AtomicInteger();
 
         static long chunkKey(int chunkX, int chunkZ) {
             return net.minecraft.world.level.ChunkPos.asLong(chunkX, chunkZ);
@@ -124,14 +128,16 @@ public final class GravityFieldLookup {
             byChunk.computeIfAbsent(chunkKey(pos.getX() >> 4, pos.getZ() >> 4),
                 k -> new ConcurrentHashMap<>()).put(pos, entry);
             maxRange.accumulateAndGet(entry.source().sourceMaxRange(), Math::max);
-            if (onShip) {
-                shipSources.add(pos);
+            if (onShip && shipSources.add(pos)) {
+                shipSourcesVersion.incrementAndGet();
             }
         }
 
         void remove(BlockPos pos) {
             byPos.remove(pos);
-            shipSources.remove(pos);
+            if (shipSources.remove(pos)) {
+                shipSourcesVersion.incrementAndGet();
+            }
             long key = chunkKey(pos.getX() >> 4, pos.getZ() >> 4);
             ConcurrentHashMap<BlockPos, Entry> bucket = byChunk.get(key);
             if (bucket != null) {
@@ -414,32 +420,151 @@ public final class GravityFieldLookup {
         if (cached != null) {
             return cached == NULL_BEST ? null : (Best) cached;
         }
-        Best result = null;
         double reach = index.maxRange.get() + 1.0;
         double cx = worldPos.getX() + 0.5;
         double cy = worldPos.getY() + 0.5;
         double cz = worldPos.getZ() + 0.5;
-        net.minecraft.world.phys.AABB probe = new net.minecraft.world.phys.AABB(
-            cx - reach, cy - reach, cz - reach, cx + reach, cy + reach, cz + reach);
-        for (org.valkyrienskies.core.api.ships.Ship ship
-            : net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(level, probe)) {
-            org.joml.Vector3d local = new org.joml.Vector3d(cx, cy, cz);
-            ship.getTransform().getWorldToShip().transformPosition(local);
-            Best onShip = computeBestFieldAt(level, index, BlockPos.containing(local.x, local.y, local.z), kind);
-            if (onShip == null) {
-                continue;
+        Best result;
+        QueryCache switches = QUERY_CACHE.get();
+        if (switches.scanAllShips) {
+            result = shipFieldAmongAllShips(level, index, cx, cy, cz, reach, kind);
+        } else {
+            // ONLY THE SHIPS THAT CARRY A FIELD ARE ASKED.
+            //
+            // This used to ask Valkyrien Skies for every loaded ship whose box
+            // intersects the probe and run computeBestFieldAt in each one. Only
+            // a ship with a source in its own grid can answer (a ship's grid is
+            // thousands of blocks from every other ship's), and VS's query is a
+            // walk over every loaded ship, so with a few hundred one-block ships
+            // near a ship-mounted core every uncached fluid cell paid for all of
+            // them: a quarter of the server's tick in the owner's profile of
+            // 2026-10-04 ("extreme tps lag with gravity core on vs ship").
+            //
+            // Same answer: a ship counts exactly when VS's query would have
+            // returned it (the same box test), and the field ships are kept
+            // in the order VS's query walks the loaded ships in, so where two
+            // of them reach one cell the same one answers as before.
+            org.joml.primitives.AABBd probe = new org.joml.primitives.AABBd(
+                cx - reach, cy - reach, cz - reach, cx + reach, cy + reach, cz + reach);
+            java.util.List<org.valkyrienskies.core.api.ships.LoadedShip> fieldShips = fieldShips(level, index);
+            result = null;
+            for (int i = 0; i < fieldShips.size(); i++) {
+                org.valkyrienskies.core.api.ships.LoadedShip ship = fieldShips.get(i);
+                if (!org.valkyrienskies.core.util.AABBdUtilKt.intersectsAABB(ship.getWorldAABB(), probe)) {
+                    continue;
+                }
+                result = shipFieldOf(level, index, ship, cx, cy, cz, kind);
+                if (result != null) {
+                    break;
+                }
             }
-            org.joml.Vector3d dir = new org.joml.Vector3d(
-                onShip.down().getStepX(), onShip.down().getStepY(), onShip.down().getStepZ());
-            ship.getTransform().getShipToWorld().transformDirection(dir);
-            if (dir.lengthSquared() < 1.0E-12) {
-                continue;
+            if (switches.verifyShipFields) {
+                Best old = shipFieldAmongAllShips(level, index, cx, cy, cz, reach, kind);
+                SHIP_FIELD_CHECKS.incrementAndGet();
+                boolean same = old == null ? result == null
+                    : result != null && old.down() == result.down() && old.source() == result.source();
+                if (!same) {
+                    SHIP_FIELD_MISMATCHES.incrementAndGet();
+                }
             }
-            result = new Best(Direction.getNearest(dir.x, dir.y, dir.z), onShip.source());
-            break;
         }
         cache.ship.put(key, result == null ? NULL_BEST : result);
         return result;
+    }
+
+    // Two test switches, read once per tick with the query memo (system properties, so a test can flip them live):
+    // -Dgravityunbound.shipFieldsScanAllShips=true is the lookup as it was before 2026-10-04 (every intersecting
+    // ship asked), for A/B runs; -Dgravityunbound.verifyShipFields=true also works every uncached answer out the
+    // old way and compares.
+    private static final java.util.concurrent.atomic.AtomicLong SHIP_FIELD_CHECKS = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong SHIP_FIELD_MISMATCHES = new java.util.concurrent.atomic.AtomicLong();
+
+    /** With {@code -Dgravityunbound.verifyShipFields=true}: {answers compared with the old lookup, answers that differed}. */
+    public static long[] shipFieldVerification() {
+        return new long[] {SHIP_FIELD_CHECKS.get(), SHIP_FIELD_MISMATCHES.get()};
+    }
+
+    /**
+     * The lookup as it was: the first ship VS returns for the probe whose
+     * own grid has a field at the point, every intersecting ship asked.
+     * Kept for the A/B switch and the verification.
+     */
+    @Nullable
+    private static Best shipFieldAmongAllShips(Level level, LevelIndex index, double cx, double cy, double cz,
+                                               double reach, Kind kind) {
+        net.minecraft.world.phys.AABB probe = new net.minecraft.world.phys.AABB(
+            cx - reach, cy - reach, cz - reach, cx + reach, cy + reach, cz + reach);
+        for (org.valkyrienskies.core.api.ships.LoadedShip ship
+            : net.camacraft.camafy.compat.vs.impl.VsTyped.intersecting(level, probe)) {
+            Best onShip = shipFieldOf(level, index, ship, cx, cy, cz, kind);
+            if (onShip != null) {
+                return onShip;
+            }
+        }
+        return null;
+    }
+
+    /** The field {@code ship}'s own grid has at the world point, its down snapped to the nearest world cardinal; or null. */
+    @Nullable
+    private static Best shipFieldOf(Level level, LevelIndex index, org.valkyrienskies.core.api.ships.Ship ship,
+                                    double cx, double cy, double cz, Kind kind) {
+        org.joml.Vector3d local = new org.joml.Vector3d(cx, cy, cz);
+        ship.getTransform().getWorldToShip().transformPosition(local);
+        Best onShip = computeBestFieldAt(level, index, BlockPos.containing(local.x, local.y, local.z), kind);
+        if (onShip == null) {
+            return null;
+        }
+        org.joml.Vector3d dir = new org.joml.Vector3d(
+            onShip.down().getStepX(), onShip.down().getStepY(), onShip.down().getStepZ());
+        ship.getTransform().getShipToWorld().transformDirection(dir);
+        if (dir.lengthSquared() < 1.0E-12) {
+            return null;
+        }
+        return new Best(Direction.getNearest(dir.x, dir.y, dir.z), onShip.source());
+    }
+
+    /**
+     * The loaded ships of this level that carry a field source, from the
+     * positions registered in a ship's grid ({@code shipSources}), in the
+     * order Valkyrien Skies walks its loaded ships in (its box query filters
+     * that same walk, so this is the order the old lookup met them in):
+     * worked out once per tick per thread (with the query memo) and again
+     * when a ship-mounted source appears or goes, one pass over the loaded
+     * ships. A source that stopped ticking keeps its ship here until it
+     * expires; that ship then answers nothing, as before.
+     */
+    private static java.util.List<org.valkyrienskies.core.api.ships.LoadedShip> fieldShips(Level level, LevelIndex index) {
+        QueryCache cache = QUERY_CACHE.get();
+        int version = index.shipSourcesVersion.get();
+        if (cache.fieldShips != null && cache.fieldShipsVersion == version
+            && cache.level == level && cache.time == level.getGameTime()) {
+            return cache.fieldShips;
+        }
+        java.util.List<org.valkyrienskies.core.api.ships.LoadedShip> ships = new java.util.ArrayList<>(2);
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet chunks = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet ids = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (BlockPos pos : index.shipSources) {
+            int chunkX = pos.getX() >> 4;
+            int chunkZ = pos.getZ() >> 4;
+            if (!chunks.add(LevelIndex.chunkKey(chunkX, chunkZ))) {
+                continue;
+            }
+            org.valkyrienskies.core.api.ships.Ship ship =
+                net.camacraft.camafy.compat.vs.impl.VsTyped.managingChunk(level, chunkX, chunkZ, false);
+            if (ship != null) {
+                ids.add(ship.getId());
+            }
+        }
+        if (!ids.isEmpty()) {
+            net.camacraft.camafy.compat.vs.impl.VsTyped.forEachLoaded(level, ship -> {
+                if (ids.contains(ship.getId())) {
+                    ships.add(ship);
+                }
+            });
+        }
+        cache.fieldShips = ships;
+        cache.fieldShipsVersion = version;
+        return ships;
     }
 
     /**
@@ -474,6 +599,12 @@ public final class GravityFieldLookup {
         @Nullable Level level;
         long time = Long.MIN_VALUE;
         final KindCache[] kinds = {new KindCache(), new KindCache(), new KindCache()};
+        // the loaded ships carrying a field source this tick (see fieldShips)
+        @Nullable java.util.List<org.valkyrienskies.core.api.ships.LoadedShip> fieldShips;
+        int fieldShipsVersion;
+        // the test switches (see shipFieldAt), as read this tick
+        boolean scanAllShips;
+        boolean verifyShipFields;
     }
 
     private static final ThreadLocal<QueryCache> QUERY_CACHE = ThreadLocal.withInitial(QueryCache::new);
@@ -485,6 +616,9 @@ public final class GravityFieldLookup {
         if (cache.level != level || cache.time != time) {
             cache.level = level;
             cache.time = time;
+            cache.fieldShips = null;
+            cache.scanAllShips = Boolean.getBoolean("gravityunbound.shipFieldsScanAllShips");
+            cache.verifyShipFields = Boolean.getBoolean("gravityunbound.verifyShipFields");
             for (KindCache k : cache.kinds) {
                 k.clear();
             }

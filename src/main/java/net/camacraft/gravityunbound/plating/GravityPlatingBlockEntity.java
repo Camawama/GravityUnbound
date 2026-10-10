@@ -815,6 +815,9 @@ public class GravityPlatingBlockEntity extends BlockEntity
     // last fluid wake-up (see wakeWorldFluidsUnderShip)
     private @Nullable AABB lastShipWakeBox = null;
     private static final int SHIP_FLUID_WAKE_PERIOD = 8;
+    // every period while the field moves or changes, rarely once it rests
+    private final net.camacraft.gravityunbound.util.ShipFluidWake shipFluidWake =
+        new net.camacraft.gravityunbound.util.ShipFluidWake();
 
     /**
      * A ship-mounted field flying over WORLD liquid: wake the fluid blocks
@@ -843,6 +846,14 @@ public class GravityPlatingBlockEntity extends BlockEntity
             return;
         }
         AABB worldBox = VsTyped.shipBoxToWorld(ship, gridBox);
+        int settings = 0;
+        for (SideData side : sideData) {
+            settings = settings * 31 + (side == null ? 0
+                : ((side.level * 31 + side.targets) * 31 + (side.isAttracting ? 1 : 2)) * 31 + Double.hashCode(side.gravityAccel));
+        }
+        if (!shipFluidWake.due(ship, worldBox, settings)) {
+            return;
+        }
         AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
         lastShipWakeBox = worldBox;
         net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);

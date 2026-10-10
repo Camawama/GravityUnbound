@@ -72,6 +72,9 @@ public class GravityCoreBlockEntity extends BlockEntity
     // last world-fluid wake-up (see GravityPlatingBlockEntity)
     private @Nullable AABB lastShipWakeBox = null;
     private static final int SHIP_FLUID_WAKE_PERIOD = 8;
+    // every period while the field moves or changes, rarely once it rests
+    private final net.camacraft.gravityunbound.util.ShipFluidWake shipFluidWake =
+        new net.camacraft.gravityunbound.util.ShipFluidWake();
 
     // A client block entity that never received authoritative data (a break
     // prediction the server rejected rolls the block back with a FRESH BE)
@@ -230,6 +233,9 @@ public class GravityCoreBlockEntity extends BlockEntity
             gridCenter.x - range, gridCenter.y - range, gridCenter.z - range,
             gridCenter.x + range, gridCenter.y + range, gridCenter.z + range);
         AABB worldBox = VsTyped.shipBoxToWorld(ownShip, gridBox);
+        if (!shipFluidWake.due(ownShip, worldBox, (range * 31 + targets) * 2 + (attracting ? 1 : 0))) {
+            return;
+        }
         AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
         lastShipWakeBox = worldBox;
         net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);

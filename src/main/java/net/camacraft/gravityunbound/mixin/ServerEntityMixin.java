@@ -45,10 +45,24 @@ public abstract class ServerEntityMixin {
     @Final
     private Entity entity;
 
+    /**
+     * The tracked entity's gravity capability, looked up once: a ServerEntity lives as long as its entity is tracked
+     * in one level, and the capability object is the entity's for its whole life (the provider hands out the same one
+     * after a revive). Looked up on every call, twice per tracked entity per tick, it was 1% of the owner's main-pack
+     * server thread with 1,479 entities (a Forge capability lookup walks every mod's providers).
+     */
+    @Unique
+    private GravityCapabilityImpl gravityunbound$comp;
+
     @Unique
     private boolean gravityunbound$activeFrame() {
-        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(this.entity);
-        return comp != null && !comp.isVisuallyDefault();
+        GravityCapabilityImpl comp = this.gravityunbound$comp;
+        if (comp == null) {
+            comp = GravityChangerAPI.getGravityComponentOrNull(this.entity);
+            if (comp == null) return false;
+            this.gravityunbound$comp = comp;
+        }
+        return !comp.isVisuallyDefault();
     }
 
     @ModifyExpressionValue(

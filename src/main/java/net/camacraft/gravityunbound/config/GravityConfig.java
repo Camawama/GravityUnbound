@@ -39,6 +39,7 @@ public class GravityConfig
 	public static ForgeConfigSpec.BooleanValue shipFieldsAffectWorldFluids;
 	public static ForgeConfigSpec.DoubleValue gravityCoreShipForceMultiplier;
 	public static ForgeConfigSpec.DoubleValue shipFieldDamping;
+	public static ForgeConfigSpec.BooleanValue shipFieldsCarryWeight;
 	public static ForgeConfigSpec.BooleanValue shipsCollideWithPlatingPanels;
 
 	// gravity normalizer
@@ -104,6 +105,13 @@ public class GravityConfig
             "captured ships keeps jittering until it spins its attractor up; with it captures settle into resting contact.",
             "Applied equal and opposite to both ships, so momentum is still conserved.")
             .defineInRange("shipFieldDamping", 0.5, 0.0, 10.0);
+        GravityConfig.shipFieldsCarryWeight = config.comment(
+            "whether a ship whose field REPLACES gravity carries the weight of the ships it holds: the field holds them up",
+            "against the world's gravity and its own ship takes that weight (a core ship with forty planks round it falls",
+            "with all of them, as a planet would; resting on the ground or held, it keeps them round it without sagging).",
+            "false: the held ships are weightless and the weight goes nowhere, so a free core ship with ships round it",
+            "floats as if the whole cluster were in zero gravity (the old behaviour). Blended fields leave gravity to act anyway.")
+            .define("shipFieldsCarryWeight", true);
         GravityConfig.shipsCollideWithPlatingPanels = config.comment(
             "whether Valkyrien Skies ships collide with gravity plating as its thin panels (registered with VS's physics at",
             "world load). Set false to fall back to VS's own default shape for plating if a world refuses to load.")

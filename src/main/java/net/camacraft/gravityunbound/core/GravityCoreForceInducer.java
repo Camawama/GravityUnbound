@@ -63,7 +63,16 @@ import net.minecraftforge.server.ServerLifecycleHooks;
  * determines that gravity ({@code util.ShipGravity}: the dimension's
  * vector as VS registered it, or a per-ship override such as VMod's) and
  * the physics thread cancels exactly that — unless the field is set to
- * BLEND with world gravity, for fields meant to add to it.
+ * BLEND with world gravity, for fields meant to add to it. The ship
+ * CARRYING the field takes that weight (config shipFieldsCarryWeight):
+ * the field holds the held ship up against the world's gravity, so the
+ * opposite force goes to the field's own ship, shared between the ships
+ * of every replacing field holding it by how hard each pulls (a world
+ * mounted field's share goes to the world). Before, the weight went
+ * nowhere: a free core ship with forty planks round it fell with only its
+ * own weight on forty-one ships' mass and the cluster floated as if in zero
+ * gravity; now it falls as one body, and a supported or held core keeps
+ * its planks round it without sagging, carrying their weight.
  *
  * PHYSICS CALLBACK. Camafy's shared ship force hook, not an attachment of
  * our own: every loaded server ship carries Camafy's single force
@@ -120,10 +129,23 @@ public final class GravityCoreForceInducer {
         }
     }
 
-    /** Physics ticks per game tick is small; after this many physics ticks
-     *  without a fresh list the game thread has stopped refreshing (source
-     *  removed / ship left every field) and the hold expires. */
-    private static final int EXPIRY_PHYS_TICKS = 10;
+    /**
+     * A hold expires once the game thread has stopped refreshing it (source
+     * removed, ship out of every field): this many GAME ticks have passed
+     * since the list it last latched, and at least {@link #EXPIRY_PHYS_TICKS}
+     * physics ticks. Counted in game ticks because VS's physics thread doesn't
+     * wait for the game thread (VS's synchronizePhysics is off by default): it
+     * goes on stepping through a server lag spike, and when the hold expired
+     * after ten physics ticks (170 ms) with no new list, every ship a field
+     * held dropped out of it at once in any spike that long, fell for a moment
+     * and was pulled back when the server caught up (the owner's cluster of
+     * planks round a core ship, at each physgun grab). A stalled or paused
+     * server ticks no game ticks, so a hold now lasts through it.
+     */
+    private static final int EXPIRY_GAME_TICKS = 2;
+
+    /** See {@link #EXPIRY_GAME_TICKS}: the physics ticks that must pass as well (VS runs three a game tick). */
+    private static final int EXPIRY_PHYS_TICKS = 6;
 
     /** A complete list older than this many game ticks when the physics
      *  thread gets to it belongs to a ship that unloaded mid-hold and has
@@ -161,6 +183,8 @@ public final class GravityCoreForceInducer {
     private List<FieldSource> active = null;
     private Vector3d activeGravity = null;
     private int physTicksSinceUpdate = 0;
+    // the game tick of the list last latched (the physics thread's own copy of completedTick)
+    private int activeTick = 0;
 
     private GravityCoreForceInducer(long shipId) {
         this.shipId = shipId;
@@ -298,10 +322,12 @@ public final class GravityCoreForceInducer {
                     active = completed;
                     activeGravity = completedGravity;
                     physTicksSinceUpdate = 0;
+                    activeTick = completedTick;
                     latched = true;
                 }
             }
-            if (!latched && ++physTicksSinceUpdate > EXPIRY_PHYS_TICKS) {
+            if (!latched && ++physTicksSinceUpdate > EXPIRY_PHYS_TICKS
+                && currentGameTick() - activeTick > EXPIRY_GAME_TICKS) {
                 // the game thread stopped refreshing (source removed / out of range)
                 active = null;
                 activeGravity = null;
@@ -329,6 +355,11 @@ public final class GravityCoreForceInducer {
         boolean replacesGravity = false;
         boolean heldByWorld = false;
         List<PhysShip> partners = new ArrayList<>(2);
+        // the ships whose replacing fields hold this one up, and how hard each pulls (their share of its weight);
+        // replacingPull also counts world-mounted replacing fields, whose share the world takes
+        List<PhysShip> carriers = null;
+        List<Double> carriedPull = null;
+        double replacingPull = 0.0;
 
         for (FieldSource field : sources) {
             PhysShip source = null;
@@ -357,7 +388,19 @@ public final class GravityCoreForceInducer {
                 heldByWorld = true;
             }
             held = true;
-            replacesGravity |= field.replacesGravity();
+            if (field.replacesGravity()) {
+                replacesGravity = true;
+                double pull = force.length();
+                replacingPull += pull;
+                if (source != null) {
+                    if (carriers == null) {
+                        carriers = new ArrayList<>(2);
+                        carriedPull = new ArrayList<>(2);
+                    }
+                    carriers.add(source);
+                    carriedPull.add(pull);
+                }
+            }
         }
         if (!held) {
             return;
@@ -380,7 +423,15 @@ public final class GravityCoreForceInducer {
             // registered it, or another mod's per-ship override such as
             // VMod's — cancelling the dimension's gravity on a ship VMod
             // had already zeroed left a net 1 g UPWARD).
-            self.applyInvariantForce(gravityActing.mul(-selfMass, new Vector3d()));
+            Vector3d lift = gravityActing.mul(-selfMass, new Vector3d());
+            self.applyInvariantForce(lift);
+            // ...and the ships carrying those fields take the weight they hold up
+            if (carriers != null && replacingPull > 0.0 && GravityConfig.shipFieldsCarryWeight.get()) {
+                for (int i = 0; i < carriers.size(); i++) {
+                    double share = carriedPull.get(i) / replacingPull;
+                    carriers.get(i).applyInvariantForce(lift.mul(-share, new Vector3d()));
+                }
+            }
         }
     }
 

@@ -5131,12 +5131,34 @@ public class GravityCapabilityImpl implements IGravityCapability {
         return new Vec3(nearestDir.step()).scale(offset);
     }
 
+    // whether this entity's box has been put under a rotated frame (or the
+    // capsule envelope) since the box was last rebuilt here unrotated
+    private boolean boxRotated = false;
+
+    /**
+     * Rebuilds the entity's box for its gravity frame (through the vanilla,
+     * mixin-wrapped makeBoundingBox, the single source of truth for the
+     * rotated box). Only when the frame needs it: under a rotated frame or
+     * the capsule, and once more on the way back to the default frame.
+     * An entity whose box has never been rotated keeps its own: makeBoundingBox
+     * is only its dimensions box, and some entities' real box is something
+     * else. A Create contraption's box is its contraption's bounds (83x83 for
+     * the owner's bearing arm), set only in its setPos; the client's first
+     * gravity sync replaced it with the 1x1 dimensions box, and since a
+     * stopped bearing never calls setPos again, Create and Flywheel lit only
+     * that box and the rest of the arm drew black. Hanging entities have
+     * their own box as well.
+     */
     private void updateBoundingBox() {
-        if (entity != null) {
-            // go through the vanilla (mixin-wrapped) path so there is a single
-            // source of truth for the rotated bounding box
-            entity.setBoundingBox(((net.camacraft.gravityunbound.mixin.EntityAccessor) entity).gc_makeBoundingBox());
+        if (entity == null) {
+            return;
         }
+        boolean rotated = currGravityDirection != Direction.DOWN || useCapsuleCollision();
+        if (!rotated && !boxRotated) {
+            return;
+        }
+        entity.setBoundingBox(((net.camacraft.gravityunbound.mixin.EntityAccessor) entity).gc_makeBoundingBox());
+        boxRotated = rotated;
     }
 
     // ------------------------------------------------------------------

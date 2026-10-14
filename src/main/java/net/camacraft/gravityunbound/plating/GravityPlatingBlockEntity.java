@@ -811,13 +811,10 @@ public class GravityPlatingBlockEntity extends BlockEntity
     // (blocks/tick^2), refreshed every tick for blended sides' fluid and
     // particle direction (see util.WorldGravity)
     private Vec3 ambientInGrid = Vec3.ZERO;
-    // the world-space box this ship-mounted plate's field covered at its
-    // last fluid wake-up (see wakeWorldFluidsUnderShip)
-    private @Nullable AABB lastShipWakeBox = null;
     private static final int SHIP_FLUID_WAKE_PERIOD = 8;
-    // every period while the field moves or changes, rarely once it rests
-    private final net.camacraft.gravityunbound.util.ShipFluidWake shipFluidWake =
-        new net.camacraft.gravityunbound.util.ShipFluidWake();
+    // the world liquid this ship-mounted plate's field may have moved, woken a budget at a time (see ShipFluidWaker)
+    private final net.camacraft.gravityunbound.util.ShipFluidWaker shipFluidWaker =
+        new net.camacraft.gravityunbound.util.ShipFluidWaker();
 
     /**
      * A ship-mounted field flying over WORLD liquid: wake the fluid blocks
@@ -845,18 +842,12 @@ public class GravityPlatingBlockEntity extends BlockEntity
         if (!anyFluidSide) {
             return;
         }
-        AABB worldBox = VsTyped.shipBoxToWorld(ship, gridBox);
         int settings = 0;
         for (SideData side : sideData) {
             settings = settings * 31 + (side == null ? 0
                 : ((side.level * 31 + side.targets) * 31 + (side.isAttracting ? 1 : 2)) * 31 + Double.hashCode(side.gravityAccel));
         }
-        if (!shipFluidWake.due(ship, worldBox, settings)) {
-            return;
-        }
-        AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
-        lastShipWakeBox = worldBox;
-        net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);
+        shipFluidWaker.wake(world, ship, gridBox, settings, this);
     }
 
     /**
@@ -884,7 +875,16 @@ public class GravityPlatingBlockEntity extends BlockEntity
 
         // forces need the LOADED ship object: this queries the loaded ships
         // themselves (on the server every one is a LoadedServerShip)
+        java.util.List<org.valkyrienskies.core.api.ships.LoadedShip> nearby = new java.util.ArrayList<>();
         for (org.valkyrienskies.core.api.ships.LoadedShip other : VsTyped.intersecting(serverLevel, searchBox)) {
+            if (ownShip == null || other.getId() != ownShip.getId()) {
+                nearby.add(other);
+            }
+        }
+        // which touch this plate's own ship (only those load it with their weight, see GravityCoreForceInducer)
+        java.util.Set<Long> touching =
+            net.camacraft.gravityunbound.core.GravityCoreForceInducer.touchingCluster(ownShip, nearby);
+        for (org.valkyrienskies.core.api.ships.LoadedShip other : nearby) {
             if (ownShip != null && other.getId() == ownShip.getId()) {
                 continue;
             }
@@ -935,7 +935,8 @@ public class GravityPlatingBlockEntity extends BlockEntity
                     new Vector3d(localEffectDir.getStepX(), localEffectDir.getStepY(), localEffectDir.getStepZ()),
                     new Vector3d(effectCenter.x, effectCenter.y, effectCenter.z),
                     new Vector3d(plateNormal.x, plateNormal.y, plateNormal.z),
-                    sideDatum.getEffectRange(), acceleration, sideDatum.gradualFalloff, sideDatum.replacesGravity),
+                    sideDatum.getEffectRange(), acceleration, sideDatum.gradualFalloff, sideDatum.replacesGravity,
+                    touching.contains(loaded.getId())),
                     net.camacraft.gravityunbound.util.ShipGravity.actingOn(serverLevel, loaded));
                 break;
             }

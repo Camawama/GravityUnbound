@@ -37,7 +37,8 @@ public class GravityMixinPlugin implements IMixinConfigPlugin
 		{
 			return false;
 		}
-		if(mixinClassName.startsWith("net.camacraft.gravityunbound.mixin.compat.VModPhysgun") && LoadingModList.get().getModFileById("the_vmod") == null)
+		if((mixinClassName.startsWith("net.camacraft.gravityunbound.mixin.compat.VModPhysgun")
+			|| mixinClassName.startsWith("net.camacraft.gravityunbound.mixin.compat.VModSchematic")) && LoadingModList.get().getModFileById("the_vmod") == null)
 		{
 			return false;
 		}

@@ -37,6 +37,8 @@ public class GravityConfig
 	public static ForgeConfigSpec.BooleanValue gravityCoreAffectsShips;
 	public static ForgeConfigSpec.BooleanValue gravityPlatingAffectsShips;
 	public static ForgeConfigSpec.BooleanValue shipFieldsAffectWorldFluids;
+	public static ForgeConfigSpec.IntValue shipFluidWakeBudget;
+	public static ForgeConfigSpec.BooleanValue vmodSchematicsSkipFieldContacts;
 	public static ForgeConfigSpec.DoubleValue gravityCoreShipForceMultiplier;
 	public static ForgeConfigSpec.DoubleValue shipFieldDamping;
 	public static ForgeConfigSpec.BooleanValue shipFieldsCarryWeight;
@@ -98,6 +100,16 @@ public class GravityConfig
         GravityConfig.gravityCoreAffectsShips = config.comment("whether gravity cores pull/push Valkyrien Skies ships").define("gravityCoreAffectsShips", true);
         GravityConfig.gravityPlatingAffectsShips = config.comment("whether gravity plating fields pull/push Valkyrien Skies ships (per-plate toggle in the settings GUI)").define("gravityPlatingAffectsShips", true);
         GravityConfig.shipFieldsAffectWorldFluids = config.comment("whether fields mounted on Valkyrien Skies ships also bend the WORLD's liquids they fly over (a ship's field pulling water out of a lake)").define("shipFieldsAffectWorldFluids", true);
+        GravityConfig.shipFluidWakeBudget = config.comment(
+            "how many world liquid blocks the fields on Valkyrien Skies ships may wake per tick (per dimension) when they move",
+            "or change; the rest wait for the next tick. Only liquid that can move is woken, and only where a moving field's",
+            "direction changed. Higher settles water under a fast ship sooner, lower keeps the server's ticks short.")
+            .defineInRange("shipFluidWakeBudget", 2048, 64, 1000000);
+        GravityConfig.vmodSchematicsSkipFieldContacts = config.comment(
+            "whether VMod's toolgun schematics leave out ships that only touch because a gravity field holds one of them",
+            "(VMod copies every ship whose box touches the one aimed at, so one ship held round a core copied the core and",
+            "everything round it). VMod's own connections still join ships. Only with VMod.")
+            .define("vmodSchematicsSkipFieldContacts", true);
         GravityConfig.gravityCoreShipForceMultiplier = config.comment("multiplier for the force gravity cores apply to ships (1.0 = 1g)").defineInRange("gravityCoreShipForceMultiplier", 1.0, 0.0, 10.0);
         GravityConfig.shipFieldDamping = config.comment(
             "damping of a held ship's velocity and spin RELATIVE to the ship (or world) carrying the field, per second",
@@ -106,11 +118,11 @@ public class GravityConfig
             "Applied equal and opposite to both ships, so momentum is still conserved.")
             .defineInRange("shipFieldDamping", 0.5, 0.0, 10.0);
         GravityConfig.shipFieldsCarryWeight = config.comment(
-            "whether a ship whose field REPLACES gravity carries the weight of the ships it holds: the field holds them up",
-            "against the world's gravity and its own ship takes that weight (a core ship with forty planks round it falls",
-            "with all of them, as a planet would; resting on the ground or held, it keeps them round it without sagging).",
-            "false: the held ships are weightless and the weight goes nowhere, so a free core ship with ships round it",
-            "floats as if the whole cluster were in zero gravity (the old behaviour). Blended fields leave gravity to act anyway.")
+            "whether the ships a REPLACING field holds fall with the ship carrying that field: they keep as much of the world's",
+            "gravity as their carrier is falling (a core ship with forty planks round it falls with all of them, as a planet",
+            "would; resting on the ground or held, it keeps them round it without sagging, and it never takes their weight).",
+            "false: the held ships are weightless, so a free core ship with ships round it floats as if the whole cluster",
+            "were in zero gravity (the old behaviour). Blended fields leave gravity to act anyway.")
             .define("shipFieldsCarryWeight", true);
         GravityConfig.shipsCollideWithPlatingPanels = config.comment(
             "whether Valkyrien Skies ships collide with gravity plating as its thin panels (registered with VS's physics at",

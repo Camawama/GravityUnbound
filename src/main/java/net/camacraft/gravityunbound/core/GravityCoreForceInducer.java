@@ -63,16 +63,22 @@ import net.minecraftforge.server.ServerLifecycleHooks;
  * determines that gravity ({@code util.ShipGravity}: the dimension's
  * vector as VS registered it, or a per-ship override such as VMod's) and
  * the physics thread cancels exactly that — unless the field is set to
- * BLEND with world gravity, for fields meant to add to it. The ship
- * CARRYING the field takes that weight (config shipFieldsCarryWeight):
- * the field holds the held ship up against the world's gravity, so the
- * opposite force goes to the field's own ship, shared between the ships
- * of every replacing field holding it by how hard each pulls (a world
- * mounted field's share goes to the world). Before, the weight went
- * nowhere: a free core ship with forty planks round it fell with only its
- * own weight on forty-one ships' mass and the cluster floated as if in zero
- * gravity; now it falls as one body, and a supported or held core keeps
- * its planks round it without sagging, carrying their weight.
+ * BLEND with world gravity, for fields meant to add to it. With config
+ * shipFieldsCarryWeight (on), where that weight goes depends on contact:
+ * a held ship TOUCHING the field's own ship, directly or through other
+ * held ships ({@link FieldSource#carried}, worked out on the game thread
+ * by {@link #touchingCluster}), is part of that body and its weight goes
+ * to the field's ship, so a free core ship with planks round it falls with
+ * them as one body and a resting or held core keeps them round it without
+ * sagging (2026-10-12). A held ship NOT touching it keeps as much of the
+ * world's gravity as its carrier is falling ({@link CarrierMotion}) and
+ * loads nothing: on 2026-10-12 every held ship's weight went to the
+ * field's ship, a raft resting on the ground in a core's field included,
+ * and the core went down at g times one plus the held mass over its own:
+ * "When I turn a gravity core into a ship, it is pulled towards the ground
+ * extremely fast" (3.4 g measured, harness gr3_core_fall). Shared between
+ * the fields holding a ship by how hard each pulls; a world-mounted
+ * field's share neither falls nor carries.
  *
  * PHYSICS CALLBACK. Camafy's shared ship force hook, not an attachment of
  * our own: every loaded server ship carries Camafy's single force
@@ -108,25 +114,69 @@ public final class GravityCoreForceInducer {
         // closing acceleration (m/s^2) and how it fades
         double accel, boolean gradualFalloff,
         // whether the field replaces the dimension's gravity for the held ship
-        boolean replacesGravity
+        boolean replacesGravity,
+        // whether the held ship touches the field's own ship, directly or through other held ships (see the class note)
+        boolean carried
     ) {
         public static FieldSource radial(
             long sourceShipId, Vector3dc gridCenter, double worldRange, double gridScale,
-            double accel, boolean attracting, boolean gradualFalloff, boolean replacesGravity
+            double accel, boolean attracting, boolean gradualFalloff, boolean replacesGravity, boolean carried
         ) {
             return new FieldSource(sourceShipId, true, new Vector3d(gridCenter), worldRange, attracting, gridScale,
-                null, null, null, null, 0.0, accel, gradualFalloff, replacesGravity);
+                null, null, null, null, 0.0, accel, gradualFalloff, replacesGravity, carried);
         }
 
         public static FieldSource planar(
             long sourceShipId, AABBdc gridBox, Vector3dc gridDirection,
             Vector3dc falloffOrigin, Vector3dc falloffNormal, double falloffRange,
-            double accel, boolean gradualFalloff, boolean replacesGravity
+            double accel, boolean gradualFalloff, boolean replacesGravity, boolean carried
         ) {
             return new FieldSource(sourceShipId, false, null, 0.0, true, 1.0,
                 new AABBd(gridBox), new Vector3d(gridDirection), new Vector3d(falloffOrigin),
-                new Vector3d(falloffNormal), falloffRange, accel, gradualFalloff, replacesGravity);
+                new Vector3d(falloffNormal), falloffRange, accel, gradualFalloff, replacesGravity, carried);
         }
+    }
+
+    /**
+     * The ships among {@code held} that touch {@code carrier}, directly or
+     * through other ships of {@code held}: their world boxes, grown by a
+     * little, meet. Game thread; empty for a world-mounted field.
+     */
+    public static java.util.Set<Long> touchingCluster(
+        @Nullable org.valkyrienskies.core.api.ships.Ship carrier,
+        List<? extends org.valkyrienskies.core.api.ships.Ship> held
+    ) {
+        java.util.Set<Long> cluster = new java.util.HashSet<>();
+        if (carrier == null || held.isEmpty()) {
+            return cluster;
+        }
+        List<AABBd> members = new ArrayList<>();
+        members.add(grown(carrier));
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (org.valkyrienskies.core.api.ships.Ship ship : held) {
+                if (cluster.contains(ship.getId())) {
+                    continue;
+                }
+                AABBd box = grown(ship);
+                for (AABBd member : members) {
+                    if (box.intersectsAABB(member)) {
+                        cluster.add(ship.getId());
+                        members.add(box);
+                        grew = true;
+                        break;
+                    }
+                }
+            }
+        }
+        return cluster;
+    }
+
+    private static AABBd grown(org.valkyrienskies.core.api.ships.Ship ship) {
+        AABBdc box = ship.getWorldAABB();
+        return new AABBd(box.minX() - 0.1, box.minY() - 0.1, box.minZ() - 0.1,
+            box.maxX() + 0.1, box.maxY() + 0.1, box.maxZ() + 0.1);
     }
 
     /**
@@ -158,6 +208,64 @@ public final class GravityCoreForceInducer {
 
     /** Per-ship state, keyed by ship id (read by the physics thread). */
     private static final ConcurrentHashMap<Long, GravityCoreForceInducer> STATES = new ConcurrentHashMap<>();
+
+    /**
+     * Whether a field holds this ship now (the list the physics thread uses, or the one the game thread last
+     * completed for it): VMod's schematic walk leaves out contacts a field made ({@code VModSchematicTouchMixin}).
+     */
+    public static boolean heldByField(long shipId) {
+        GravityCoreForceInducer state = STATES.get(shipId);
+        if (state == null) {
+            return false;
+        }
+        synchronized (state) {
+            return (state.active != null && !state.active.isEmpty())
+                || (state.completed != null && !state.completed.isEmpty());
+        }
+    }
+
+    /** Ships carrying a field that holds another ship, and how they are moving (see {@link CarrierMotion}). */
+    private static final ConcurrentHashMap<Long, CarrierMotion> CARRIERS = new ConcurrentHashMap<>();
+
+    /**
+     * How fast a ship carrying a field is accelerating, sampled on the physics
+     * thread every step from its velocity and smoothed over a few steps (a
+     * landing or a knock is a spike, not a fall). The ships its field holds
+     * keep as much of the world's gravity as it is falling: all of it when it
+     * falls freely (they go down with it), none when it rests or is held.
+     */
+    private static final class CarrierMotion {
+        /** Game ticks without a field of this ship holding anything after which it stops being sampled. */
+        static final int FORGET_GAME_TICKS = 100;
+        /** Share of the step's raw acceleration taken into the smoothed one. */
+        static final double SMOOTHING = 0.3;
+
+        volatile int touchedTick;
+        private Vector3d lastVelocity;
+        private volatile Vector3d acceleration = new Vector3d();
+
+        void sample(PhysShip ship, double dt) {
+            Vector3d velocity = new Vector3d(ship.getVelocity());
+            if (lastVelocity != null && dt > 0.0 && velocity.isFinite()) {
+                Vector3d raw = new Vector3d(velocity).sub(lastVelocity).div(dt);
+                if (raw.isFinite()) {
+                    acceleration = new Vector3d(acceleration).lerp(raw, SMOOTHING);
+                }
+            }
+            lastVelocity = velocity;
+        }
+
+        /** How much of a fall at {@code gravity} this carrier is making: 0 (resting, held) to 1 (falling freely). */
+        double fallShare(Vector3dc gravity) {
+            double g = gravity.length();
+            if (!(g > 1.0E-6)) {
+                return 0.0;
+            }
+            double along = acceleration.dot(gravity) / (g * g);
+            // a resting ship's contacts jitter it a little: the first tenth is no fall
+            return Math.max(0.0, Math.min(1.0, (along - 0.1) / 0.8));
+        }
+    }
 
     private final long shipId;
     // set (with `this` held) when the physics thread drops this state from
@@ -256,6 +364,9 @@ public final class GravityCoreForceInducer {
             buildingTick = tick;
         }
         buildingGravity = new Vector3d(gravityActingOnShip);
+        if (source.sourceShipId() != WORLD && source.replacesGravity()) {
+            CARRIERS.computeIfAbsent(source.sourceShipId(), id -> new CarrierMotion()).touchedTick = tick;
+        }
         if (!source.radial()) {
             for (FieldSource existing : building) {
                 if (!existing.radial() && existing.sourceShipId() == source.sourceShipId()) {
@@ -301,6 +412,16 @@ public final class GravityCoreForceInducer {
     private static void onPhysicsTick(PhysShip physShip, PhysLevel physLevel, double dt) {
         if (STATES.isEmpty()) {
             return;
+        }
+        CarrierMotion carrier = CARRIERS.get(physShip.getId());
+        if (carrier != null) {
+            MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+            if (server != null && server.getTickCount() - carrier.touchedTick > CarrierMotion.FORGET_GAME_TICKS) {
+                CARRIERS.remove(physShip.getId(), carrier);
+            }
+            else {
+                carrier.sample(physShip, dt);
+            }
         }
         GravityCoreForceInducer state = STATES.get(physShip.getId());
         if (state != null) {
@@ -359,6 +480,7 @@ public final class GravityCoreForceInducer {
         // replacingPull also counts world-mounted replacing fields, whose share the world takes
         List<PhysShip> carriers = null;
         List<Double> carriedPull = null;
+        List<Boolean> carriedFlags = null;
         double replacingPull = 0.0;
 
         for (FieldSource field : sources) {
@@ -396,9 +518,11 @@ public final class GravityCoreForceInducer {
                     if (carriers == null) {
                         carriers = new ArrayList<>(2);
                         carriedPull = new ArrayList<>(2);
+                        carriedFlags = new ArrayList<>(2);
                     }
                     carriers.add(source);
                     carriedPull.add(pull);
+                    carriedFlags.add(field.carried());
                 }
             }
         }
@@ -423,13 +547,27 @@ public final class GravityCoreForceInducer {
             // registered it, or another mod's per-ship override such as
             // VMod's — cancelling the dimension's gravity on a ship VMod
             // had already zeroed left a net 1 g UPWARD).
-            Vector3d lift = gravityActing.mul(-selfMass, new Vector3d());
-            self.applyInvariantForce(lift);
-            // ...and the ships carrying those fields take the weight they hold up
-            if (carriers != null && replacingPull > 0.0 && GravityConfig.shipFieldsCarryWeight.get()) {
+            // A ship touching its carrier's body is cancelled in full and that
+            // body takes the weight; one that isn't keeps as much of it as its
+            // carrier is falling (see the class note).
+            boolean carry = carriers != null && replacingPull > 0.0 && GravityConfig.shipFieldsCarryWeight.get();
+            double falling = 0.0;
+            if (carry) {
                 for (int i = 0; i < carriers.size(); i++) {
-                    double share = carriedPull.get(i) / replacingPull;
-                    carriers.get(i).applyInvariantForce(lift.mul(-share, new Vector3d()));
+                    CarrierMotion motion = carriedFlags.get(i) ? null : CARRIERS.get(carriers.get(i).getId());
+                    if (motion != null) {
+                        falling += carriedPull.get(i) / replacingPull * motion.fallShare(gravityActing);
+                    }
+                }
+            }
+            Vector3d lift = gravityActing.mul(-selfMass * (1.0 - Math.min(1.0, falling)), new Vector3d());
+            self.applyInvariantForce(lift);
+            if (carry) {
+                Vector3d weight = gravityActing.mul(selfMass, new Vector3d());
+                for (int i = 0; i < carriers.size(); i++) {
+                    if (carriedFlags.get(i)) {
+                        carriers.get(i).applyInvariantForce(weight.mul(carriedPull.get(i) / replacingPull, new Vector3d()));
+                    }
                 }
             }
         }

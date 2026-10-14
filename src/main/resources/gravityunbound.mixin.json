@@ -71,6 +71,7 @@
     "compat.VSForgeNetworkingMixin",
     "compat.VModPhysgunRotationMixin",
     "compat.VModPhysgunStateMixin",
+    "compat.VModSchematicTouchMixin",
     "compat.VanillaBackportServerEntityMixin",
     "fall_distance.ServerGamePacketListenerImplMixin",
     "fall_distance.ServerPlayerMixin_FallDistance",

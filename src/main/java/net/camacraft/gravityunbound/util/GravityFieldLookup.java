@@ -388,6 +388,9 @@ public final class GravityFieldLookup {
      */
     @Nullable
     private static Best bestFluidFieldAt(@Nullable BlockGetter getter, BlockPos pos) {
+        if (!GravityConfig.gravityAffectsFluids.get() || !mayReach(getter, pos)) {
+            return null;
+        }
         Best own = bestFieldAt(getter, pos, GravityConfig.gravityAffectsFluids.get(), Kind.FLUID);
         if (own != null || !(getter instanceof Level level)) {
             return own;
@@ -395,7 +398,7 @@ public final class GravityFieldLookup {
         if (!GravityConfig.gravityAffectsFluids.get() || !GravityConfig.shipFieldsAffectWorldFluids.get()) {
             return null;
         }
-        LevelIndex index = SOURCES.get(level);
+        LevelIndex index = QUERY_CACHE.get().index;
         if (index == null || index.shipSources.isEmpty()) {
             return null;
         }
@@ -605,6 +608,12 @@ public final class GravityFieldLookup {
         // the test switches (see shipFieldAt), as read this tick
         boolean scanAllShips;
         boolean verifyShipFields;
+        // this tick's index of the level (one SOURCES lookup a tick, not one a query) and the block columns any
+        // field can reach: in its own grid (reachGrid) and, game threads only, the world under field ships
+        // (reachShips); built on first use, see mayReach
+        @Nullable LevelIndex index;
+        @Nullable it.unimi.dsi.fastutil.longs.LongOpenHashSet reachGrid;
+        @Nullable it.unimi.dsi.fastutil.longs.LongOpenHashSet reachShips;
     }
 
     private static final ThreadLocal<QueryCache> QUERY_CACHE = ThreadLocal.withInitial(QueryCache::new);
@@ -619,11 +628,95 @@ public final class GravityFieldLookup {
             cache.fieldShips = null;
             cache.scanAllShips = Boolean.getBoolean("gravityunbound.shipFieldsScanAllShips");
             cache.verifyShipFields = Boolean.getBoolean("gravityunbound.verifyShipFields");
+            cache.index = SOURCES.get(level);
+            cache.reachGrid = null;
+            cache.reachShips = null;
             for (KindCache k : cache.kinds) {
                 k.clear();
             }
         }
         return cache.kinds[kind.ordinal()];
+    }
+
+    /**
+     * Whether any field could reach {@code pos} this tick: the block column is
+     * within the reach of a registered source (any grid: a ship's own fluid is
+     * in its shipyard columns) or, for a world position asked on a game
+     * thread, under a ship carrying a field. False answers a fluid query
+     * outright, with one set lookup.
+     *
+     * <p>The owner's lag profile (2026-10-12, main pack, 12 TPS): a moving
+     * core ship over the sea woke every liquid block in its field every eight
+     * ticks, and each woken block asked this lookup about every neighbour.
+     * {@code fluidDownAt} alone was 38.8% of the server thread, most of it the
+     * fixed cost of a query that finds nothing: the level's index from a
+     * synchronized weak map, the tick memo, the game time and the ship walk,
+     * paid per call. They are now paid once a tick per thread; a column no
+     * field reaches answers DOWN after one long-set lookup. Same answers:
+     * the columns are a superset of what {@link #computeBestFieldAt}'s range
+     * test and {@link #shipFieldAt}'s box test can accept.
+     */
+    private static boolean mayReach(@Nullable BlockGetter getter, BlockPos pos) {
+        Level level = resolveLevel(getter);
+        if (level == null) {
+            return false;
+        }
+        kindCache(level, Kind.FLUID);
+        QueryCache cache = QUERY_CACHE.get();
+        LevelIndex index = cache.index;
+        if (index == null || index.byPos.isEmpty()) {
+            return false;
+        }
+        long column = net.minecraft.world.level.ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4);
+        if (cache.reachGrid == null) {
+            cache.reachGrid = gridReach(index);
+        }
+        if (cache.reachGrid.contains(column)) {
+            return true;
+        }
+        // only where bestFluidFieldAt would go on to ask the ships
+        if (!(getter instanceof Level) || index.shipSources.isEmpty()
+            || !GravityConfig.shipFieldsAffectWorldFluids.get()) {
+            return false;
+        }
+        if (cache.reachShips == null) {
+            cache.reachShips = shipReach(level, index);
+        }
+        return cache.reachShips.contains(column);
+    }
+
+    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet gridReach(LevelIndex index) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet columns = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (Entry entry : index.byPos.values()) {
+            BlockPos at = entry.source().sourcePos();
+            int range = entry.source().sourceMaxRange();
+            addColumns(columns, at.getX() - range, at.getZ() - range, at.getX() + range, at.getZ() + range);
+        }
+        return columns;
+    }
+
+    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet shipReach(Level level, LevelIndex index) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet columns = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        double reach = index.maxRange.get() + 1.0;
+        for (org.valkyrienskies.core.api.ships.LoadedShip ship : fieldShips(level, index)) {
+            org.joml.primitives.AABBdc box = ship.getWorldAABB();
+            // a box this wide is no ship's (an unset transform): leave it out rather than mark half the world
+            if (box.maxX() - box.minX() > 4096.0 || box.maxZ() - box.minZ() > 4096.0) {
+                continue;
+            }
+            addColumns(columns, (int) Math.floor(box.minX() - reach), (int) Math.floor(box.minZ() - reach),
+                (int) Math.floor(box.maxX() + reach), (int) Math.floor(box.maxZ() + reach));
+        }
+        return columns;
+    }
+
+    private static void addColumns(it.unimi.dsi.fastutil.longs.LongOpenHashSet columns,
+                                   int minX, int minZ, int maxX, int maxZ) {
+        for (int cx = minX >> 4; cx <= maxX >> 4; cx++) {
+            for (int cz = minZ >> 4; cz <= maxZ >> 4; cz++) {
+                columns.add(net.minecraft.world.level.ChunkPos.asLong(cx, cz));
+            }
+        }
     }
 
     /**
@@ -791,12 +884,12 @@ public final class GravityFieldLookup {
         if (level == null) {
             return null;
         }
-        LevelIndex index = SOURCES.get(level);
+        KindCache cache = kindCache(level, kind);
+        LevelIndex index = QUERY_CACHE.get().index;
         if (index == null || index.byPos.isEmpty()) {
             return null;
         }
 
-        KindCache cache = kindCache(level, kind);
         Long key = pos.asLong();
         Object cached = cache.grid.get(key);
         if (cached != null) {

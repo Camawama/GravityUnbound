@@ -68,13 +68,10 @@ public class GravityCoreBlockEntity extends BlockEntity
     // (blocks/tick^2), refreshed every tick for the blended fluid/particle
     // direction (see util.WorldGravity)
     private Vec3 ambientInGrid = Vec3.ZERO;
-    // the world-space box this ship-mounted core's field covered at its
-    // last world-fluid wake-up (see GravityPlatingBlockEntity)
-    private @Nullable AABB lastShipWakeBox = null;
     private static final int SHIP_FLUID_WAKE_PERIOD = 8;
-    // every period while the field moves or changes, rarely once it rests
-    private final net.camacraft.gravityunbound.util.ShipFluidWake shipFluidWake =
-        new net.camacraft.gravityunbound.util.ShipFluidWake();
+    // the world liquid this ship-mounted core's field may have moved, woken a budget at a time (see ShipFluidWaker)
+    private final net.camacraft.gravityunbound.util.ShipFluidWaker shipFluidWaker =
+        new net.camacraft.gravityunbound.util.ShipFluidWaker();
 
     // A client block entity that never received authoritative data (a break
     // prediction the server rejected rolls the block back with a FRESH BE)
@@ -232,13 +229,7 @@ public class GravityCoreBlockEntity extends BlockEntity
         AABB gridBox = new AABB(
             gridCenter.x - range, gridCenter.y - range, gridCenter.z - range,
             gridCenter.x + range, gridCenter.y + range, gridCenter.z + range);
-        AABB worldBox = VsTyped.shipBoxToWorld(ownShip, gridBox);
-        if (!shipFluidWake.due(ownShip, worldBox, (range * 31 + targets) * 2 + (attracting ? 1 : 0))) {
-            return;
-        }
-        AABB sweep = lastShipWakeBox != null ? worldBox.minmax(lastShipWakeBox) : worldBox;
-        lastShipWakeBox = worldBox;
-        net.camacraft.gravityunbound.util.GravityFieldLookup.resettleFluids(world, sweep);
+        shipFluidWaker.wake(world, ownShip, gridBox, (range * 31 + targets) * 2 + (attracting ? 1 : 0), this);
     }
 
     private void applyToEntities(Level world, Vec3 center, double range, double shipScale, AABB searchBox) {
@@ -450,6 +441,7 @@ public class GravityCoreBlockEntity extends BlockEntity
         // which never are the loaded ship — an instanceof test on those once
         // filtered every ship out, which is why "affects ships" never did
         // anything.
+        java.util.List<LoadedServerShip> held = new java.util.ArrayList<>();
         for (LoadedShip ship : VsTyped.intersecting(serverLevel, searchBox)) {
             if (ownShip != null && ship.getId() == ownShip.getId()) {
                 continue;
@@ -464,7 +456,11 @@ public class GravityCoreBlockEntity extends BlockEntity
             if (new Vector3d(center.x, center.y, center.z).sub(shipPos).length() > range) {
                 continue;
             }
-
+            held.add(serverShip);
+        }
+        // which of them touch this core's own ship (see GravityCoreForceInducer: only those load it with their weight)
+        java.util.Set<Long> touching = GravityCoreForceInducer.touchingCluster(ownShip, held);
+        for (LoadedServerShip serverShip : held) {
             GravityCoreForceInducer inducer = GravityCoreForceInducer.getOrCreate(serverShip);
             if (inducer == null) {
                 return; // Camafy's ship force hook unavailable: leave ships alone
@@ -478,7 +474,8 @@ public class GravityCoreBlockEntity extends BlockEntity
             inducer.offer(GravityCoreForceInducer.FieldSource.radial(
                     ownShip != null ? ownShip.getId() : GravityCoreForceInducer.WORLD,
                     new Vector3d(gridCenter.x, gridCenter.y, gridCenter.z),
-                    range, shipScale, acceleration, attracting, gradualFalloff, replacesGravity),
+                    range, shipScale, acceleration, attracting, gradualFalloff, replacesGravity,
+                    touching.contains(serverShip.getId())),
                 net.camacraft.gravityunbound.util.ShipGravity.actingOn(serverLevel, serverShip));
         }
     }

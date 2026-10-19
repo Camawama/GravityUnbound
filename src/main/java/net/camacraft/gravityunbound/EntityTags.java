@@ -21,7 +21,21 @@ public class EntityTags {
         if (entity instanceof Player player && player.isSpectator()) {
             return false;
         }
-        return !entity.getType().is(GRAVITY_IMMUNE);
+        // per type (2026-10-17): the tag test ran for every entity every tick; forgotten when tags reload
+        EntityType<?> type = entity.getType();
+        Boolean immune = IMMUNE.get(type);
+        if (immune == null) {
+            immune = type.is(GRAVITY_IMMUNE);
+            IMMUNE.put(type, immune);
+        }
+        return !immune;
+    }
+
+    private static final java.util.Map<EntityType<?>, Boolean> IMMUNE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Tags were (re)loaded (server start, a datapack reload, a client login): the per-type answers are dropped. */
+    public static void tagsUpdated() {
+        IMMUNE.clear();
     }
 
     public static boolean allowGravityTransformationInRendering(Entity entity) {

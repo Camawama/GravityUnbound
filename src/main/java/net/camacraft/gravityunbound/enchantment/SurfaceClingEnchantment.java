@@ -100,7 +100,9 @@ public class SurfaceClingEnchantment extends Enchantment {
 
     public static boolean isWearing(LivingEntity living) {
         ItemStack boots = living.getItemBySlot(EquipmentSlot.FEET);
-        return !boots.isEmpty()
+        // isEnchanted is one tag lookup; getItemEnchantmentLevel parses the whole enchantment list, and this ran for
+        // every living entity every tick (2026-10-17)
+        return !boots.isEmpty() && boots.isEnchanted()
             && EnchantmentHelper.getItemEnchantmentLevel(GravityEnchantments.SURFACE_CLING.get(), boots) > 0;
     }
 

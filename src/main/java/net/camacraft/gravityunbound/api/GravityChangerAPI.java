@@ -195,6 +195,9 @@ public abstract class GravityChangerAPI {
         if (entity == null) {
             return null;
         }
+        if (entity instanceof net.camacraft.gravityunbound.capabilities.GravityCapCache cached) {
+            return cached.gravityunbound$gravity(); // kept on the entity (2026-10-17)
+        }
         IGravityCapability cap = entity.getCapability(GravityCapabilities.GRAVITY).orElse(null);
         return cap instanceof GravityCapabilityImpl impl ? impl : null;
     }

@@ -65,18 +65,25 @@ public final class DimensionGravity {
         if (runtime != null) {
             return runtime;
         }
+        // the config's entries, parsed when the config loads or reloads (PerfSwitches.refresh -> reload): this used to
+        // read the config value here, once per entity per tick (a locked path walk in Forge's config), 2026-10-17
+        Map<ResourceLocation, Entry> entries = configEntries;
+        return entries.isEmpty() ? null : entries.get(dim);
+    }
+
+    /** Re-parses the config's dimension list (called when the config loads or reloads, and once per level tick). */
+    public static void reload() {
         List<? extends String> raw;
         try {
             raw = GravityConfig.dimensionGravity.get();
         }
-        catch (IllegalStateException e) {
-            return null; // config not loaded yet
+        catch (IllegalStateException | NullPointerException e) {
+            return; // config not loaded yet
         }
         if (raw != parsedFrom) {
             configEntries = parse(raw);
             parsedFrom = raw;
         }
-        return configEntries.get(dim);
     }
 
     private static Map<ResourceLocation, Entry> parse(List<? extends String> raw) {

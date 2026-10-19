@@ -26,6 +26,9 @@ public class GravityConfig
 	// plating / fields
 	public static ForgeConfigSpec.IntValue platingMaxLevel;
 	public static ForgeConfigSpec.BooleanValue gravityAffectsFluids;
+
+	// performance
+	public static ForgeConfigSpec.BooleanValue idleEntityFastPaths;
 	public static ForgeConfigSpec.BooleanValue gravityAffectsParticles;
 	public static ForgeConfigSpec.ConfigValue<List<? extends String>> artificialGravityDimensions;
 	public static ForgeConfigSpec.DoubleValue artificialGravityAcceleration;
@@ -128,6 +131,17 @@ public class GravityConfig
             "whether Valkyrien Skies ships collide with gravity plating as its thin panels (registered with VS's physics at",
             "world load). Set false to fall back to VS's own default shape for plating if a world refuses to load.")
             .define("shipsCollideWithPlatingPanels", true);
+        config.pop();
+
+        config.push("Performance");
+        GravityConfig.idleEntityFastPaths = config.comment(
+            "whether an entity whose gravity is plain vanilla and whose frame is settled (no field, no plating, no ship, no",
+            "gravity item, effect or enchantment, not riding anything rotated) skips the per-tick work that could not change",
+            "anything: the gravity-effect gathering and the frame chase. Every entity ticked that work before (2026-10-15:",
+            "Gravity Unbound was 4.8% of the server thread with 360 idle mobs and no field in the world). A field, item,",
+            "effect, vehicle or ship reaching the entity ends the fast path the same tick. Off: every tick as before.",
+            "-Dgravityunbound.idleFastPaths=false forces it off for a run.")
+            .define("idleEntityFastPaths", true);
         config.pop();
 
         config.push("Gravity Normalizer");

@@ -2523,7 +2523,52 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * rate-limited so it is continuous. Converges exactly onto the canonical
      * cardinal frame when the field is cardinal.
      */
+    /**
+     * IDLE FAST PATH (2026-10-17): the frame is exactly the vanilla one and nothing is pulling it anywhere (no field
+     * target but plain down, no held surface, no ship attached or anchored, no ship carry pending, no override, no
+     * reported client frame, not a passenger, no synced target but the identity): {@link #advanceVisualRotation} would
+     * compute the identity target, step nothing, re-express nothing and unwind nothing. Only its bookkeeping is kept.
+     * Off with {@code Performance.idleEntityFastPaths}.
+     */
+    private boolean frameSettledPlain() {
+        return net.camacraft.gravityunbound.util.PerfSwitches.idleFastPaths()
+            && pendingShipDelta == null && externalVisualOverride == null && clientReportedFrame == null
+            && attachShip == null && renderAttachShip == null && fieldAnchorShip == null
+            && lastGroundNormal == null && recentReleasedNormal == null && recentReleasedTicks == 0
+            && surfaceChangeCooldown == 0 && !nonLivingDetached
+            && currGravityDirection == Direction.DOWN
+            && !entity.isPassenger()
+            && (targetGravityVector == null || isPlainDown(targetGravityVector))
+            && isIdentity(visualRotation) && isIdentity(visualTarget) && isIdentity(lastChaseTarget)
+            && (syncedVisualTarget == null || isIdentity(syncedVisualTarget));
+    }
+
+    private static boolean isIdentity(Quaternionf q) {
+        return q.w() == 1.0f && q.x() == 0.0f && q.y() == 0.0f && q.z() == 0.0f;
+    }
+
+    private static boolean isPlainDown(Vec3 v) {
+        return v.x == 0.0 && v.y == -1.0 && v.z == 0.0;
+    }
+
     private void advanceVisualRotation() {
+        if (frameSettledPlain()) {
+            // what the full path below does for this state (see frameSettledPlain), and nothing else
+            prevVisualRotation.set(visualRotation);
+            attachRotValid = false;
+            boolean projectile = entity instanceof net.minecraft.world.entity.projectile.Projectile;
+            if (!projectile && targetStableTicks < Integer.MAX_VALUE) {
+                targetStableTicks++;
+            }
+            if (!projectile && !shouldAcceptServerSync()) {
+                // normalizeTwist's bookkeeping: no held surface, the frame is the canonical one
+                if (ticksSinceShipFrame < Integer.MAX_VALUE) {
+                    ticksSinceShipFrame++;
+                }
+                frameFromShip = false;
+            }
+            return;
+        }
         prevVisualRotation.set(visualRotation);
 
         // SHIP CARRY: compose the attached ship's FULL tick rotation onto the
@@ -3723,69 +3768,74 @@ public class GravityCapabilityImpl implements IGravityCapability {
         }
 
         targetGravityVector = baseGravityDirection;
-        targetGravityStrength = baseGravityStrength * GravityConfig.gravityStrengthMultiplier.get();
+        targetGravityStrength = baseGravityStrength * net.camacraft.gravityunbound.util.PerfSwitches.gravityStrengthMultiplier();
 
         tempEffects.clear();
-        isFiringUpdateEvent = true;
-        try {
-            // per-dimension ambient gravity (config / API): a LOW-priority
-            // effect so any plating/core/normalizer field overrides it
-            Vec3 dimensionDown = net.camacraft.gravityunbound.util.DimensionGravity.downFor(entity.level());
-            if (dimensionDown != null) {
-                this.applyGravityDirectionEffect(
-                    dimensionDown, RotationParameters.getDefault(), 100.0, false,
-                    net.camacraft.gravityunbound.util.DimensionGravity.strengthFor(entity.level()), true
-                );
-            }
-            for (ItemStack handSlot : entity.getHandSlots()) {
-                Item item = handSlot.getItem();
-                if (item instanceof GravityAnchorItem anchorItem) {
+        // per-dimension ambient gravity (config / API): a LOW-priority
+        // effect so any plating/core/normalizer field overrides it
+        Vec3 dimensionDown = net.camacraft.gravityunbound.util.DimensionGravity.downFor(entity.level());
+        // IDLE FAST PATH (2026-10-17): when nothing below could queue an effect (no field reached the entity, no
+        // dimension gravity, no gravity item in hand, no status effect, no cling boots: nothingToGather) the lookups
+        // are skipped; the list stays empty, as the lookups would have left it
+        if (dimensionDown != null || !nothingToGather()) {
+            isFiringUpdateEvent = true;
+            try {
+                if (dimensionDown != null) {
                     this.applyGravityDirectionEffect(
-                        Vec3.atLowerCornerOf(anchorItem.direction.getNormal()),
-                        null, 1000000
+                        dimensionDown, RotationParameters.getDefault(), 100.0, false,
+                        net.camacraft.gravityunbound.util.DimensionGravity.strengthFor(entity.level()), true
                     );
                 }
-            }
-            if (entity instanceof LivingEntity livingEntity) {
-                // API showcase: enchanted boots that cling to any surface
-                // (see enchantment.SurfaceClingEnchantment — it uses only the
-                // public effect API and the public probe/surface accessors)
-                net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment.applyTo(livingEntity, this);
-                for (GravityDirectionMobEffect dirEffect : GravityDirectionMobEffect.EFFECT_MAP.values()) {
-                    MobEffectInstance effectInstance = livingEntity.getEffect(dirEffect);
-                    if (effectInstance != null) {
-                        int amplifier = effectInstance.getAmplifier();
-
+                for (ItemStack handSlot : entity.getHandSlots()) {
+                    Item item = handSlot.getItem();
+                    if (item instanceof GravityAnchorItem anchorItem) {
                         this.applyGravityDirectionEffect(
-                            Vec3.atLowerCornerOf(dirEffect.gravityDirection.getNormal()),
-                            null,
-                            amplifier + 1.0
+                            Vec3.atLowerCornerOf(anchorItem.direction.getNormal()),
+                            null, 1000000
                         );
                     }
                 }
-                if (livingEntity.hasEffect(GravityMobEffects.INVERT.get())) {
-                    // invert relative to the BASE direction, not the current
-                    // one: inverting whatever is currently applied re-inverts
-                    // the already-inverted result a few ticks later — a
-                    // permanent flip-flop limit cycle
-                    this.applyGravityDirectionEffect(
-                        baseGravityDirection.scale(-1),
-                        null, 5
-                    );
+                if (entity instanceof LivingEntity livingEntity) {
+                    // API showcase: enchanted boots that cling to any surface
+                    // (see enchantment.SurfaceClingEnchantment — it uses only the
+                    // public effect API and the public probe/surface accessors)
+                    net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment.applyTo(livingEntity, this);
+                    for (GravityDirectionMobEffect dirEffect : GravityDirectionMobEffect.EFFECT_MAP.values()) {
+                        MobEffectInstance effectInstance = livingEntity.getEffect(dirEffect);
+                        if (effectInstance != null) {
+                            int amplifier = effectInstance.getAmplifier();
+
+                            this.applyGravityDirectionEffect(
+                                Vec3.atLowerCornerOf(dirEffect.gravityDirection.getNormal()),
+                                null,
+                                amplifier + 1.0
+                            );
+                        }
+                    }
+                    if (livingEntity.hasEffect(GravityMobEffects.INVERT.get())) {
+                        // invert relative to the BASE direction, not the current
+                        // one: inverting whatever is currently applied re-inverts
+                        // the already-inverted result a few ticks later — a
+                        // permanent flip-flop limit cycle
+                        this.applyGravityDirectionEffect(
+                            baseGravityDirection.scale(-1),
+                            null, 5
+                        );
+                    }
+                    GravityMobEffects.INCREASE.get().apply(livingEntity, this);
+                    GravityMobEffects.DECREASE.get().apply(livingEntity, this);
+                    GravityMobEffects.REVERSE.get().apply(livingEntity, this);
                 }
-                GravityMobEffects.INCREASE.get().apply(livingEntity, this);
-                GravityMobEffects.DECREASE.get().apply(livingEntity, this);
-                GravityMobEffects.REVERSE.get().apply(livingEntity, this);
+
+                tempEffects.addAll(delayApplyDirEffects);
+                delayApplyDirEffects.clear();
+
+                targetGravityStrength *= delayApplyStrengthEffect;
+                delayApplyStrengthEffect = 1.0;
             }
-
-            tempEffects.addAll(delayApplyDirEffects);
-            delayApplyDirEffects.clear();
-
-            targetGravityStrength *= delayApplyStrengthEffect;
-            delayApplyStrengthEffect = 1.0;
-        }
-        finally {
-            isFiringUpdateEvent = false;
+            finally {
+                isFiringUpdateEvent = false;
+            }
         }
 
         // secondary (bleed) contributions only blend alongside a primary
@@ -3889,6 +3939,34 @@ public class GravityCapabilityImpl implements IGravityCapability {
         snapPhysicsDirection();
 
         currGravityStrength = targetGravityStrength;
+    }
+
+    /**
+     * IDLE FAST PATH (2026-10-17): true when the effect lookups of {@link #updateGravityStatus} could not add an
+     * effect this tick, so they are skipped: no field source queued anything (fields push their effects onto the
+     * entities in reach; {@code delayApplyDirEffects}), no strength effect is queued, no gravity anchor item is in a
+     * hand, and a living entity has no status effect at all, no cling state to release and no Surface Cling boots
+     * (checked by one tag lookup). Off with {@code Performance.idleEntityFastPaths}.
+     */
+    private boolean nothingToGather() {
+        if (!net.camacraft.gravityunbound.util.PerfSwitches.idleFastPaths()) {
+            return false;
+        }
+        if (!delayApplyDirEffects.isEmpty() || delayApplyStrengthEffect != 1.0) {
+            return false;
+        }
+        for (ItemStack handSlot : entity.getHandSlots()) {
+            if (handSlot.getItem() instanceof GravityAnchorItem) {
+                return false;
+            }
+        }
+        if (entity instanceof LivingEntity living) {
+            if (!living.getActiveEffectsMap().isEmpty() || clingHeldLastTick || clingReleaseTicks != 0) {
+                return false;
+            }
+            return !net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment.isWearing(living);
+        }
+        return true;
     }
 
     /**

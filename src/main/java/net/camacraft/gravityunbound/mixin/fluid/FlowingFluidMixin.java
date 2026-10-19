@@ -401,8 +401,11 @@ public abstract class FlowingFluidMixin {
     private boolean gravityunbound$noRotatedSourceConversion(
         FluidState fluidState, Level level, BlockPos pos, Operation<Boolean> original
     ) {
-        return !(level.getBlockState(pos).getBlock()
-                instanceof net.camacraft.gravityunbound.plating.GravityPlatingBlock)
+        // a plate is a field source: with none registered in the level there is no plate cell to protect, and the
+        // block read here ran for every source-conversion check of every spreading water block (2026-10-17)
+        return (!GravityFieldLookup.hasSources(level)
+                || !(level.getBlockState(pos).getBlock()
+                    instanceof net.camacraft.gravityunbound.plating.GravityPlatingBlock))
             && original.call(fluidState, level, pos);
     }
 

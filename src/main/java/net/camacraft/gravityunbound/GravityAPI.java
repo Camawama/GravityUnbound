@@ -55,6 +55,9 @@ public class GravityAPI
 		// keep RotationParameters' defaults in sync with the config
 		bus.addListener((ModConfigEvent.Loading e) -> RotationParameters.updateDefault());
 		bus.addListener((ModConfigEvent.Reloading e) -> RotationParameters.updateDefault());
+		// cached config values and the idle-entity fast paths (util.PerfSwitches)
+		net.camacraft.gravityunbound.util.PerfSwitches.register(bus, MinecraftForge.EVENT_BUS);
+		MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.TagsUpdatedEvent e) -> EntityTags.tagsUpdated());
 
 		// soft compatibility layers (each is a no-op when its mod is absent)
 		bus.addListener((net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent e) ->

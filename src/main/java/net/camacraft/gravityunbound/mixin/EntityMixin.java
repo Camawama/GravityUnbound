@@ -42,7 +42,7 @@ import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 @Mixin(Entity.class)
-public abstract class EntityMixin {
+public abstract class EntityMixin implements net.camacraft.gravityunbound.capabilities.GravityCapCache {
     @Shadow
     private Vec3 position;
 
@@ -134,9 +134,24 @@ public abstract class EntityMixin {
     @Shadow
     public float fallDistance;
 
+    // the capability, looked up once and kept (GravityCapCache): re-fetched when Forge has invalidated it
+    @org.spongepowered.asm.mixin.Unique
+    private net.minecraftforge.common.util.LazyOptional<IGravityCapability> gravityunbound$capCache;
+
+    @Override
+    public GravityCapabilityImpl gravityunbound$gravity() {
+        net.minecraftforge.common.util.LazyOptional<IGravityCapability> cap = gravityunbound$capCache;
+        if (cap == null || !cap.isPresent()) {
+            cap = ((Entity) (Object) this).getCapability(GravityCapabilities.GRAVITY);
+            gravityunbound$capCache = cap;
+        }
+        IGravityCapability c = cap.orElse(null);
+        return c instanceof GravityCapabilityImpl impl ? impl : null;
+    }
+
     // convenience: the capability, or null when gravity is fully default (fast path)
     private GravityCapabilityImpl gravityunbound$comp() {
-        GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull((Entity) (Object) this);
+        GravityCapabilityImpl comp = gravityunbound$gravity();
         if (comp == null || comp.isVisuallyDefault()) {
             return null;
         }
@@ -380,8 +395,10 @@ public abstract class EntityMixin {
     @Inject(method = "tick", at = @At("HEAD"))
     private void tick(CallbackInfo ci)
     {
-        Entity entity = Entity.class.cast(this);
-        entity.getCapability(GravityCapabilities.GRAVITY).ifPresent(IGravityCapability::tick);
+        GravityCapabilityImpl comp = gravityunbound$gravity();
+        if (comp != null) {
+            comp.tick();
+        }
     }
 
     /**

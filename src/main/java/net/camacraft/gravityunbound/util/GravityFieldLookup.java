@@ -320,13 +320,38 @@ public final class GravityFieldLookup {
      * (or regions) with no gravity fields.
      */
     public static boolean hasSources(@Nullable BlockGetter getter) {
+        if (!PerfSwitches.gravityAffectsFluids()) {
+            return false;
+        }
         Level level = resolveLevel(getter);
         if (level == null) {
             return false;
         }
-        LevelIndex index = SOURCES.get(level);
-        return index != null && !index.byPos.isEmpty() && GravityConfig.gravityAffectsFluids.get();
+        LevelIndex index = indexOf(level);
+        return index != null && !index.byPos.isEmpty();
     }
+
+    /**
+     * The level's index, remembered for the last level asked (SOURCES is a synchronized WeakHashMap: a lock and a
+     * hash per lookup, and the fluid wraps ask several times per spread). A level with no index yet answers null and
+     * isn't remembered, so the first {@link #register} on it is seen at once; the index object of a level never changes.
+     */
+    @Nullable
+    private static LevelIndex indexOf(Level level) {
+        LevelMemo memo = LAST_INDEX;
+        if (memo != null && memo.level == level) {
+            return memo.index;
+        }
+        LevelIndex index = SOURCES.get(level);
+        if (index != null) {
+            LAST_INDEX = new LevelMemo(level, index);
+        }
+        return index;
+    }
+
+    private record LevelMemo(Level level, LevelIndex index) {}
+
+    private static volatile LevelMemo LAST_INDEX = null;
 
     /**
      * Whether ANY field source claims {@code pos} — including fields whose
@@ -388,14 +413,14 @@ public final class GravityFieldLookup {
      */
     @Nullable
     private static Best bestFluidFieldAt(@Nullable BlockGetter getter, BlockPos pos) {
-        if (!GravityConfig.gravityAffectsFluids.get() || !mayReach(getter, pos)) {
+        if (!PerfSwitches.gravityAffectsFluids() || !mayReach(getter, pos)) {
             return null;
         }
-        Best own = bestFieldAt(getter, pos, GravityConfig.gravityAffectsFluids.get(), Kind.FLUID);
+        Best own = bestFieldAt(getter, pos, true, Kind.FLUID);
         if (own != null || !(getter instanceof Level level)) {
             return own;
         }
-        if (!GravityConfig.gravityAffectsFluids.get() || !GravityConfig.shipFieldsAffectWorldFluids.get()) {
+        if (!PerfSwitches.shipFieldsAffectWorldFluids()) {
             return null;
         }
         LevelIndex index = QUERY_CACHE.get().index;

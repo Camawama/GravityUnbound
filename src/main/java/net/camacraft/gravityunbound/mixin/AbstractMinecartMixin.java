@@ -13,6 +13,7 @@ import net.camacraft.gravityunbound.util.RotationUtil;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
@@ -121,6 +122,20 @@ public abstract class AbstractMinecartMixin extends Entity {
      */
     @org.spongepowered.asm.mixin.Unique
     private @Nullable Direction gravityunbound$railBottom = null;
+
+    /** The cell of the last {@code decide} that found no sticky rail, or MIN_VALUE (see the tick hook). */
+    @Unique
+    private long gravityunbound$restingVanillaCell = Long.MIN_VALUE;
+
+    @Unique
+    private boolean gravityunbound$restingOffStickyRails(AbstractMinecart self, GravityCapabilityImpl comp) {
+        return net.camacraft.gravityunbound.util.PerfSwitches.idleFastPaths()
+            && comp.isVisuallyDefault()
+            && self.onGround()
+            && self.getDeltaMovement().lengthSqr() < 1.0E-8
+            && self.tickCount % 10 != 0
+            && gravityunbound$restingVanillaCell == BlockPos.containing(self.position()).asLong();
+    }
 
     public AbstractMinecartMixin(EntityType<?> type, Level world) {
         super(type, world);
@@ -258,9 +273,20 @@ public abstract class AbstractMinecartMixin extends Entity {
             return;
         }
 
-        StickyRailMinecartLogic.DetectResult result = self.canUseRail()
-            ? StickyRailMinecartLogic.decide(this.level(), this.position(), comp.getCurrGravityDirection())
-            : StickyRailMinecartLogic.DetectResult.VANILLA;
+        StickyRailMinecartLogic.DetectResult result;
+        if (!self.canUseRail()) {
+            result = StickyRailMinecartLogic.DetectResult.VANILLA;
+        }
+        else if (gravityunbound$restingOffStickyRails(self, comp)) {
+            // IDLE FAST PATH (2026-10-17): a cart resting on the ground (or a vanilla rail) in the cell where the
+            // last decision found no sticky rail reads the seven block states again every ten ticks, not every tick
+            result = StickyRailMinecartLogic.DetectResult.VANILLA;
+        }
+        else {
+            result = StickyRailMinecartLogic.decide(this.level(), this.position(), comp.getCurrGravityDirection());
+            gravityunbound$restingVanillaCell = result.decision() == StickyRailMinecartLogic.Decision.VANILLA
+                ? BlockPos.containing(this.position()).asLong() : Long.MIN_VALUE;
+        }
 
         if (result.decision() == StickyRailMinecartLogic.Decision.RIDE) {
             Direction bottom = result.hit().bottom();

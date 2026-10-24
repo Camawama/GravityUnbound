@@ -1,5 +1,13 @@
 # Gravity Unbound Changelog (formerly GravityVS)
 
+## Unreleased (2.0.0-dev) — 2026-10-23 (idle mobs, a second look)
+
+The owner after the pack perf test (2026-10-23): "take a look at fullstop and gravity unbound optimizations for idle mobs". With 400 passive mobs with their AI (pack harness `perf_pack`, spark every 5 ms over 30 s), the capability tick was 345 ms of the 30 s. Of that, 100 ms is Camafy's physics-claim ask (the callbacks MKW Mobility and Physgun Unbound register, left as they are). Two things in this mod went:
+
+- **No arc cosine in the sync check.** `maybeSendSync` asked `angleBetween(lastSynced, target) > threshold` for every entity every tick, and the `acos` in it was 40 ms. `angleExceeds` asks the same question as |dot| < cos(threshold / 2), with the cosines worked out once; same answers, no `acos`.
+- **No attribute lookups for plain strength.** `applyGravityStrengthAttribute` looked up the `forge:entity_gravity` attribute and the field-strength modifier on every living entity every tick, to clear a modifier only a field ever puts there (20 ms). The modifier is transient, so a mob whose strength is plain and on which this capability never put one is skipped. Players are always looked at: a player revived from another may carry what its old self had.
+- **Measured:** both are gone from the profile after the change (the `acos`, and the attribute lookup under this tick), about 0.1 ms of server tick with 400 mobs. Nothing changes but the cost.
+
 ## Unreleased (2.0.0-dev) — 2026-10-17 (the per-entity cost of idle mobs)
 
 The perf agent's reading of the owner's spark profiles of 2026-10-15 (a fresh world, no ship, no field, about 360 idle mobs, server tick mean 32 to 34 ms): Gravity Unbound was 5.8 s of the 120 s server thread (4.8%): the capability tick for every entity every tick 2.5 s (`updateGravityStatus` 0.8 s, Camafy's `PhysicsOwnership.claimsExcept` 0.5 s, `advanceVisualRotation` 0.4 s, the gravity-immune tag test 0.2 s, `DimensionGravity` 0.2 s), the fluid wraps on water settling in new chunks 1.1 s, `AbstractMinecart.stickyRailTick` 0.6 s, a Forge capability lookup per `gravityunbound$comp` call 0.6 s; and 1.2% of the render thread for the same tick on the client. None of it could change anything for a mob with plain gravity.

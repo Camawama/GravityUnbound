@@ -991,13 +991,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (!(entity instanceof LivingEntity living) || shouldAcceptServerSync()) {
             return;
         }
+        double amount = currGravityStrength - 1.0;
+        // Plain strength and no modifier of ours on the mob: nothing to add or clear, so no attribute lookups (two
+        // map lookups for every mob every tick, 20 ms of every 30 s with 400 mobs, 2026-10-23). The modifier is
+        // transient, so a mob only has it if this capability put it there; players are always looked at (a player
+        // revived from another may carry what its old self had).
+        if (Math.abs(amount) < 1.0E-4 && !strengthModifierApplied && !(living instanceof Player)) {
+            return;
+        }
         net.minecraft.world.entity.ai.attributes.AttributeInstance attr =
             living.getAttribute(net.minecraftforge.common.ForgeMod.ENTITY_GRAVITY.get());
         if (attr == null) {
             return;
         }
 
-        double amount = currGravityStrength - 1.0;
         net.minecraft.world.entity.ai.attributes.AttributeModifier existing =
             attr.getModifier(GRAVITY_STRENGTH_MODIFIER_ID);
 
@@ -1005,10 +1012,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
             if (existing != null) {
                 attr.removeModifier(GRAVITY_STRENGTH_MODIFIER_ID);
             }
+            strengthModifierApplied = false;
             return;
         }
         if (existing != null) {
             if (Math.abs(existing.getAmount() - amount) < 1.0E-4) {
+                strengthModifierApplied = true;
                 return;
             }
             attr.removeModifier(GRAVITY_STRENGTH_MODIFIER_ID);
@@ -1017,7 +1026,11 @@ public class GravityCapabilityImpl implements IGravityCapability {
             GRAVITY_STRENGTH_MODIFIER_ID, "GravityUnbound field strength", amount,
             net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.MULTIPLY_TOTAL
         ));
+        strengthModifierApplied = true;
     }
+
+    /** Whether this capability's gravity-strength modifier may be on the entity (applyGravityStrengthAttribute). */
+    private boolean strengthModifierApplied;
 
     /**
      * Freshly spawned non-player entities (spawn eggs, fireworks, thrown
@@ -3686,6 +3699,20 @@ public class GravityCapabilityImpl implements IGravityCapability {
         return (float) (2.0 * Math.acos(Mth.clamp(dot, 0.0f, 1.0f)));
     }
 
+    /** cos(half) of maybeSendSync's frame thresholds: 0.05 rad for the target, 0.02 rad for a parked vehicle's frame. */
+    private static final double COS_HALF_SYNC_TARGET = Math.cos(0.05 / 2.0);
+    private static final double COS_HALF_SYNC_ATTACH = Math.cos(0.02 / 2.0);
+
+    /**
+     * {@code angleBetween(a, b) > angle}, given cos(angle / 2), without the arc cosine: 2 acos(|dot|) exceeds the angle
+     * exactly when |dot| is below cos(angle / 2). maybeSendSync asks it for every entity every tick, where the acos
+     * was 40 ms of every 30 s with 400 mobs (pack harness perf_pack, 2026-10-23).
+     */
+    private static boolean angleExceeds(Quaternionf a, Quaternionf b, double cosHalfAngle) {
+        float dot = Math.abs(a.x() * b.x() + a.y() * b.y() + a.z() * b.z() + a.w() * b.w());
+        return dot < cosHalfAngle;
+    }
+
     /**
      * Whether THIS side computes this entity's gravity: the client player, or a vehicle the local player drives (see
      * {@link #shouldAcceptServerSync}). Server packets about it are echoes of what this side already did or sent.
@@ -4606,12 +4633,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
             // while parked, and those are what the clients rebuild from
             Quaternionf local = gravityunbound$attachLocalFrame();
             frameChanged = lastSyncedAttachShipId != attachShip.getId()
-                || angleBetween(lastSyncedAttachLocal, local) > 0.02f
+                || angleExceeds(lastSyncedAttachLocal, local, COS_HALF_SYNC_ATTACH)
                 || Float.isNaN(lastSyncedAttachYaw)
                 || Math.abs(Mth.wrapDegrees(entity.getYRot() - lastSyncedAttachYaw)) > 0.25f;
         }
         else {
-            frameChanged = angleBetween(lastSyncedVisualTarget, visualTarget) > 0.05f
+            frameChanged = angleExceeds(lastSyncedVisualTarget, visualTarget, COS_HALF_SYNC_TARGET)
                 || lastSyncedAttachShipId != -1L;
         }
         boolean changed = needsSync

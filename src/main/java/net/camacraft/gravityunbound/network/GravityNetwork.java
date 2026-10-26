@@ -10,7 +10,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 
 public class GravityNetwork
 {
-	private static final String PROTOCOL_VERSION = "3";   // 2: the ship-frame vehicle report (2026-09-30); 3: ship-held riders' frames and headings (2026-10-01)
+	private static final String PROTOCOL_VERSION = "4";   // 2: the ship-frame vehicle report (2026-09-30); 3: ship-held riders' frames and headings (2026-10-01); 4: a player's departure from a planet for space (2026-10-24)
 	// every message is registered with the one direction it may travel: one
 	// arriving the other way is dropped before its handler runs
 	public static final CamafyChannel NET = CamafyChannel.create(new ResourceLocation(GravityAPI.MODID, "gravityapi"), PROTOCOL_VERSION);
@@ -26,6 +26,8 @@ public class GravityNetwork
 		NET.serverbound(PlayerFrameSyncPacket.class, PlayerFrameSyncPacket::encode, PlayerFrameSyncPacket::new, PlayerFrameSyncPacket.Handler::onMessage);
 		// 4: the vehicle a player drives, placed in its ship's frame (2026-09-30)
 		NET.serverbound(ShipVehicleMotionPacket.class, ShipVehicleMotionPacket::encode, ShipVehicleMotionPacket::new, ShipVehicleMotionPacket.Handler::onMessage);
+		// 5: the planet a player last left for VS Genesis's space (2026-10-24, celestial.CelestialGravity)
+		NET.clientbound(CelestialDeparturePacket.class, CelestialDeparturePacket::encode, CelestialDeparturePacket::new, CelestialDeparturePacket.Handler::onMessage);
 	}
 	
     public static <MSG> void sendToServer(MSG message) 

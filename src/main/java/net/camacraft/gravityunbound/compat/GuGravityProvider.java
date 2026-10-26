@@ -5,6 +5,7 @@ import net.camacraft.camafy.compat.gravity.GravityFrame;
 import net.camacraft.camafy.compat.gravity.GravityProvider;
 import net.camacraft.gravityunbound.api.GravityChangerAPI;
 import net.camacraft.gravityunbound.capabilities.GravityCapabilityImpl;
+import net.camacraft.gravityunbound.celestial.CelestialGravity;
 import net.camacraft.gravityunbound.util.GravityFieldLookup;
 import net.camacraft.gravityunbound.config.GravityConfig;
 import net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment;
@@ -73,13 +74,23 @@ public final class GuGravityProvider implements GravityProvider {
         return comp == null || comp.isVisuallyDefault() ? WORLD_UP : comp.getUpVector();
     }
 
+    /** The field's pull, or in VS Genesis's space the bodies' (celestial.CelestialGravity). */
     @Override
     public Vec3 pullDirection(Entity entity) {
+        Vec3 celestial = CelestialGravity.pullOf(entity);
+        if (celestial != null) {
+            return celestial.normalize();
+        }
         return GravityChangerAPI.getFieldPullDirection(entity);
     }
 
+    /** In VS Genesis's space, the bodies' pull on this entity as a multiple of its vanilla gravity. */
     @Override
     public double strength(Entity entity) {
+        Vec3 celestial = CelestialGravity.pullOf(entity);
+        if (celestial != null) {
+            return celestial.length();
+        }
         return GravityChangerAPI.getGravityStrength(entity);
     }
 
@@ -103,6 +114,10 @@ public final class GuGravityProvider implements GravityProvider {
     public boolean ownsGravity(Entity entity) {
         if (!entity.isNoGravity()) {
             return false;
+        }
+        // VS Genesis's bodies pull it (only no-gravity entities in Genesis's space that this mod pulls, see CelestialGravity)
+        if (CelestialGravity.pullOf(entity) != null) {
+            return true;
         }
         GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
         if (comp == null || !comp.isInField()) {

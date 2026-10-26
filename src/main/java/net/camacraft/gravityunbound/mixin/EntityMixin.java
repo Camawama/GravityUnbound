@@ -92,6 +92,9 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
     public abstract boolean isVehicle();
 
     @Shadow
+    public abstract boolean isPushable();
+
+    @Shadow
     public abstract AABB getBoundingBox();
 
     @Shadow
@@ -1143,7 +1146,8 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
                         dz *= g;
                         dx *= 0.05000000074505806D;
                         dz *= 0.05000000074505806D;
-                        if (!this.isVehicle()) {
+                        // as vanilla: a body that isn't pushable (an armor stand, a Camafy NPC without its pushable option) stays
+                        if (!this.isVehicle() && this.isPushable()) {
                             this.push(-dx, 0.0D, -dz);
                         }
                     }
@@ -1167,7 +1171,7 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
                         dz *= g;
                         dx *= 0.05000000074505806D;
                         dz *= 0.05000000074505806D;
-                        if (!entity.isVehicle()) {
+                        if (!entity.isVehicle() && entity.isPushable()) {
                             entity.push(dx, 0.0D, dz);
                         }
                     }

@@ -103,6 +103,11 @@ public class GravityCommand {
             })
         );
         
+        // what VS Genesis's bodies pull with here (celestial.CelestialGravity); /planet gravity (Camafy) changes them
+        builder.then(Commands.literal("celestial")
+            .executes(context -> executeCelestial(context.getSource()))
+        );
+        
         builder.then(Commands.literal("randomize_base_direction")
             .executes(context -> {
                 CommandSourceStack source = context.getSource();
@@ -151,6 +156,68 @@ public class GravityCommand {
         );
         
         dispatcher.register(builder);
+    }
+    
+    private static int executeCelestial(CommandSourceStack source) {
+        net.minecraft.server.level.ServerLevel level = source.getLevel();
+        net.minecraft.world.phys.Vec3 at = source.getPosition();
+        if (!net.camacraft.camafy.compat.genesis.Celestials.available()) {
+            source.sendFailure(Component.literal("VS Genesis 0.7 isn't here"));
+            return 0;
+        }
+        if (!net.camacraft.camafy.compat.genesis.Celestials.isSpace(level)) {
+            double g = net.camacraft.gravityunbound.celestial.CelestialGravity.surfaceGravity(level);
+            net.camacraft.gravityunbound.util.DimensionGravity.Entry body =
+                net.camacraft.gravityunbound.util.DimensionGravity.bodyEntry(level);
+            String text = Double.isNaN(g)
+                ? level.dimension().location() + " isn't a Genesis body"
+                : String.format(java.util.Locale.ROOT, "%s is a Genesis body: surface gravity %.3f g%s", level.dimension().location(), g,
+                    body != null ? " (applied)" : Math.abs(g - 1.0) <= 1.0E-6 ? "" : " (not applied: config, Ad Astra or celestialSurfaceGravity)");
+            source.sendSuccess(() -> Component.literal(text), false);
+            return 1;
+        }
+        Entity entity = source.getEntity();
+        net.camacraft.gravityunbound.celestial.CelestialGravity.Grace grace = null;
+        if (entity != null) {
+            GravityCapabilityImpl comp = GravityChangerAPI.getGravityComponentOrNull(entity);
+            if (comp != null) {
+                grace = comp.celestial.grace();
+            }
+        }
+        double scale = net.camacraft.camafy.compat.genesis.Celestials.spaceScale(level);
+        int shown = 0;
+        for (net.camacraft.camafy.compat.genesis.Celestials.Body body : net.camacraft.camafy.compat.genesis.Celestials.bodies(level)) {
+            double surface = net.camacraft.gravityunbound.celestial.CelestialGravity.surfacePull(level, body);
+            double reach = net.camacraft.gravityunbound.celestial.CelestialGravity.reach(body);
+            double d = body.position().distanceTo(at);
+            if (!(surface > 0.0) || d > reach * 1.5) {
+                continue;
+            }
+            double share = net.camacraft.gravityunbound.celestial.CelestialGravity.falloff(d, body.radius(), reach);
+            String text = String.format(java.util.Locale.ROOT,
+                "%s (%s): %.1f radii away, reach %.1f radii, pull %.4f g (%.5f blocks/tick^2)", body.id(),
+                body.kind().name().toLowerCase(java.util.Locale.ROOT), d / body.radius(), reach / body.radius(),
+                surface * share / scale, surface * share * GravityCapabilityImpl.BASE_GRAVITY_ACCEL);
+            source.sendSuccess(() -> Component.literal(text), false);
+            shown++;
+        }
+        if (shown == 0) {
+            source.sendSuccess(() -> Component.literal("no Genesis body pulls here"), false);
+        }
+        GravityCapabilityImpl own = entity != null ? GravityChangerAPI.getGravityComponentOrNull(entity) : null;
+        net.minecraft.world.phys.Vec3 pull = own != null ? own.celestial.pull() : null;
+        boolean turning = own != null && own.celestial.turning();
+        String total = pull == null || pull.lengthSqr() < 1.0E-14 ? "pulling this entity: nothing" : String.format(java.util.Locale.ROOT,
+            "pulling this entity: %.4f g toward (%.2f, %.2f, %.2f), %s", pull.length() / scale,
+            pull.x / pull.length(), pull.y / pull.length(), pull.z / pull.length(),
+            turning ? "its frame turned to it" : "force only (under " + net.camacraft.gravityunbound.celestial.CelestialGravity.TURN_ON
+                + " g, carried by a ship, or a field holds it)");
+        source.sendSuccess(() -> Component.literal(total), false);
+        if (grace != null) {
+            String g = "departure grace: " + grace.describe();
+            source.sendSuccess(() -> Component.literal(g), false);
+        }
+        return shown;
     }
     
     private static int executeSetBaseStrength(Collection<? extends Entity> entities, double strength) {

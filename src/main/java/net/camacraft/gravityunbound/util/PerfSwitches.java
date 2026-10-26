@@ -58,6 +58,7 @@ public final class PerfSwitches {
         gravityAffectsFluids = fluids;
         shipFieldsAffectWorldFluids = shipFluids;
         DimensionGravity.reload();
+        net.camacraft.gravityunbound.celestial.CelestialGravity.refresh();
     }
 
     /** Whether entities with plain gravity and a settled frame may skip the per-tick work that can't change anything. */

@@ -58,6 +58,8 @@ public class GravityAPI
 		// cached config values and the idle-entity fast paths (util.PerfSwitches)
 		net.camacraft.gravityunbound.util.PerfSwitches.register(bus, MinecraftForge.EVENT_BUS);
 		MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.TagsUpdatedEvent e) -> EntityTags.tagsUpdated());
+		MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.server.ServerStoppedEvent e) ->
+			net.camacraft.gravityunbound.util.DimensionGravity.clearBodyCache());
 
 		// soft compatibility layers (each is a no-op when its mod is absent)
 		bus.addListener((net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent e) ->
@@ -68,6 +70,8 @@ public class GravityAPI
 				net.camacraft.gravityunbound.core.GravityCoreForceInducer.registerPhysicsHook();
 				// plating collides with ships as its panels, not as a cube or nothing
 				net.camacraft.gravityunbound.util.ShipBlockShapes.register();
+				// VS Genesis's bodies pull ships in its space, and body worlds' gravity reaches the ships on them
+				net.camacraft.gravityunbound.celestial.CelestialShips.register();
 			}));
 	}
 }

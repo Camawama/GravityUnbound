@@ -213,6 +213,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
     private int oppositeStableTicks = 0;
     private int fieldGraceTicks = 0;
 
+    // VS Genesis's bodies' pull on this entity in its space (celestial.CelestialGravity), worked out every tick
+    public final net.camacraft.gravityunbound.celestial.CelestialGravity.EntityState celestial =
+        new net.camacraft.gravityunbound.celestial.CelestialGravity.EntityState();
+    // the priority of the strongest effect the last resolved field had (-MAX once no field holds the entity)
+    private double dominantFieldPriority = -Double.MAX_VALUE;
+
     // the visual/aim frame (world->player) and its per-tick history for render
     // interpolation; visualTarget is the frame the field vector asks for
     private final Quaternionf visualRotation = new Quaternionf();
@@ -808,6 +814,9 @@ public class GravityCapabilityImpl implements IGravityCapability {
         if (!foreignMotion) {
             applyFieldPullDeficit();
         }
+        // VS Genesis's bodies in its space: worked out on both sides (Camafy's gravity answers), applied on the side
+        // that moves the entity, never while a field owns its gravity or another mod its motion
+        net.camacraft.gravityunbound.celestial.CelestialGravity.tickEntity(entity, this, foreignMotion);
         maybeSnapFreshSpawn();
         updateSurfaceProbe();
         updateShipAttachment();
@@ -4196,7 +4205,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
     }
 
     /** An entity's own vanilla gravity, blocks per tick squared: what a field's strength scales. */
-    private static double vanillaGravity(Entity entity) {
+    public static double vanillaGravity(Entity entity) {
         if (entity instanceof net.minecraft.world.entity.projectile.AbstractArrow) {
             return 0.05;
         }
@@ -4229,6 +4238,15 @@ public class GravityCapabilityImpl implements IGravityCapability {
         return fieldGraceTicks > 0;
     }
 
+    /**
+     * The priority of the strongest effect of the field that holds this entity (its last resolved one, through the
+     * field's grace), or -Double.MAX_VALUE when none does: which source a field is (celestial.CelestialGravity's 200
+     * against plating, cores and Surface Cling).
+     */
+    public double getDominantFieldPriority() {
+        return fieldGraceTicks > 0 ? dominantFieldPriority : -Double.MAX_VALUE;
+    }
+
     /** The id of the forge:entity_gravity modifier that carries this capability's strength. */
     public static java.util.UUID strengthModifierId() {
         return GRAVITY_STRENGTH_MODIFIER_ID;
@@ -4255,6 +4273,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
             currentRotationParameters = RotationParameters.getDefault();
             surfaceAlignAllowed = true;
             if (fieldGraceTicks <= 0) {
+                dominantFieldPriority = -Double.MAX_VALUE;
                 fieldAnchorShip = null;
                 fieldAnchorLocalDown = null;
                 fieldAnchorLocalPos = null;
@@ -4277,6 +4296,7 @@ public class GravityCapabilityImpl implements IGravityCapability {
                 maxPriority = effect.priority;
             }
         }
+        dominantFieldPriority = maxPriority;
 
         // blend effects close to the strongest one, weighted by priority
         double BLEND_RANGE = 5.0;

@@ -51,6 +51,14 @@ public class GravityConfig
 	public static ForgeConfigSpec.IntValue normalizerDefaultRange;
 	public static ForgeConfigSpec.IntValue normalizerMaxRange;
 
+	// VS Genesis bodies (celestial.CelestialGravity)
+	public static ForgeConfigSpec.BooleanValue celestialGravity;
+	public static ForgeConfigSpec.BooleanValue celestialGravityAffectsShips;
+	public static ForgeConfigSpec.BooleanValue celestialSurfaceGravity;
+	public static ForgeConfigSpec.DoubleValue celestialDepartureGraceSeconds;
+	public static ForgeConfigSpec.DoubleValue celestialDepartureClearFactor;
+	public static ForgeConfigSpec.DoubleValue celestialDepartureRampSeconds;
+
     static
     {
     	Pair<GravityConfig, ForgeConfigSpec> pair = new ForgeConfigSpec.Builder().configure(GravityConfig::new);
@@ -147,6 +155,36 @@ public class GravityConfig
         config.push("Gravity Normalizer");
         GravityConfig.normalizerDefaultRange = config.comment("default half-extent (blocks) of a freshly placed gravity normalizer's zone").defineInRange("normalizerDefaultRange", 8, 1, 128);
         GravityConfig.normalizerMaxRange = config.comment("maximum half-extent (blocks) a gravity normalizer can be upgraded to").defineInRange("normalizerMaxRange", 32, 1, 128);
+        config.pop();
+
+        config.push("Celestial Gravity");
+        GravityConfig.celestialGravity = config.comment(
+            "whether VS Genesis's bodies pull what is in its space (genesis:great_unknown): players, mobs, items and the rest,",
+            "toward each body's centre, inverse-square from its surface out to its reach. Strength and reach per body come from",
+            "Camafy (/planet gravity, <world>/camafy/celestials.json; planets and moons reach 16 radii, stars 3, black holes 8),",
+            "times Genesis's 1/16 space scale. Gravity fields (plating, cores, normalizers) still replace it where they reach.",
+            "-Dgravityunbound.celestialGravity=false forces it off for a run.")
+            .define("celestialGravity", true);
+        GravityConfig.celestialGravityAffectsShips = config.comment(
+            "whether VS Genesis's bodies also pull Valkyrien Skies ships in its space, and whether a world that is a Genesis",
+            "body with a gravity other than Earth's changes how fast ships fall there")
+            .define("celestialGravityAffectsShips", true);
+        GravityConfig.celestialSurfaceGravity = config.comment(
+            "whether a world that is a VS Genesis body (a Camafy runtime planet or moon, say) has that body's gravity on its",
+            "surface (the moon's 0.16). A dimensionGravity entry for the world wins; Ad Astra's planets keep their own.")
+            .define("celestialSurfaceGravity", true);
+        GravityConfig.celestialDepartureGraceSeconds = config.comment(
+            "seconds after Genesis carries a ship (and its riders) from a planet into space during which that planet doesn't",
+            "pull it back, unless it gets clear sooner (celestialDepartureClearFactor); every other body pulls as usual.",
+            "0: no grace, the planet pulls from the first tick.")
+            .defineInRange("celestialDepartureGraceSeconds", 20.0, 0.0, 600.0);
+        GravityConfig.celestialDepartureClearFactor = config.comment(
+            "the grace also ends once the traveller is this many times as far from the planet's centre as where Genesis put",
+            "it in space (Genesis puts a ship a planet's size plus 20 blocks from its centre: 2.4 radii for Earth)")
+            .defineInRange("celestialDepartureClearFactor", 2.0, 1.0, 50.0);
+        GravityConfig.celestialDepartureRampSeconds = config.comment(
+            "seconds over which the planet's pull comes back once the grace ends")
+            .defineInRange("celestialDepartureRampSeconds", 5.0, 0.0, 120.0);
         config.pop();
     }
 }

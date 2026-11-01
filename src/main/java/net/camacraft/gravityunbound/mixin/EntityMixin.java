@@ -1121,15 +1121,18 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
 
         ci.cancel();
 
-        Quaternionf selfRotation = GravityChangerAPI.getGravityRotation((Entity) (Object) this);
-        Quaternionf otherRotation = GravityChangerAPI.getGravityRotation(entity);
-
         if (!this.isPassengerOfSameVehicle(entity)) {
             if (!entity.noPhysics && !this.noPhysics) {
                 Vec3 entityOffset = entity.getBoundingBox().getCenter().subtract(this.getBoundingBox().getCenter());
 
                 {
-                    Vec3 playerEntityOffset = RotationUtil.vecWorldToPlayer(entityOffset, selfRotation);
+                    // each side's push goes into ITS velocity, which Entity.move reads in that body's own convention
+                    // (modify_move_Vec3d_0_0): a settled non-player's in the entity convention, everyone else's in the
+                    // visual frame. Taking both through the player convention, as before, mirrored x for a non-player
+                    // under UP gravity (the two conventions differ exactly there): a pushable Camafy NPC standing with
+                    // a player on the plated deck of an upside-down Valkyrien Skies ship was shoved TOWARD the player
+                    // along x, and kept being shoved (the owner, 2026-10-26).
+                    Vec3 playerEntityOffset = gravityunbound$worldToLocalOf((Entity) (Object) this, selfComp, entityOffset);
                     double dx = playerEntityOffset.x;
                     double dz = playerEntityOffset.z;
                     double f = Mth.absMax(dx, dz);
@@ -1154,7 +1157,7 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
                 }
 
                 {
-                    Vec3 entityEntityOffset = RotationUtil.vecWorldToPlayer(entityOffset, otherRotation);
+                    Vec3 entityEntityOffset = gravityunbound$worldToLocalOf(entity, otherComp, entityOffset);
                     double dx = entityEntityOffset.x;
                     double dz = entityEntityOffset.z;
                     double f = Mth.absMax(dx, dz);
@@ -1178,6 +1181,23 @@ public abstract class EntityMixin implements net.camacraft.gravityunbound.capabi
                 }
             }
         }
+    }
+
+    /**
+     * A world vector in the local convention {@code e}'s velocity is read in by {@code Entity.move}
+     * ({@link #modify_move_Vec3d_0_0}): the world vector itself without a frame, the entity convention for a settled
+     * non-player, the visual frame for everyone else.
+     */
+    @org.spongepowered.asm.mixin.Unique
+    private static Vec3 gravityunbound$worldToLocalOf(Entity e, GravityCapabilityImpl comp, Vec3 world) {
+        if (comp == null) return world;
+        if (!(e instanceof Player)) {
+            Direction settled = comp.getSettledCardinal();
+            if (settled != null) {
+                return RotationUtil.vecWorldToEntity(world, settled);
+            }
+        }
+        return RotationUtil.vecWorldToPlayer(world, comp.getVisualRotation());
     }
 
     @Inject(

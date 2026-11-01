@@ -173,22 +173,18 @@ public abstract class EntityRenderDispatcherMixin {
     }
 
     /**
-     * The vanilla circle shadow is a stylistic stand-in for sunlight, so it
-     * must NOT rotate with gravity — an upside-down player still casts a
-     * world-oriented shadow on the ground below. But it must ADAPT: a player
-     * lying sideways on a wall shades a longer strip of ground, centered
-     * under the MODEL's center rather than under the feet point. For
-     * visually-default entities vanilla runs untouched; rotated entities get
-     * an elliptical, model-centered blob (long axis along the model's
-     * world-horizontal lying direction, growing toward half the model height
-     * as the model tips over), drawn by Camafy's {@link BlobShadow} (the port
-     * of vanilla's shadow that used to live here, shared with Physgun Unbound
-     * since Camafy 0.1.16). Ordinary-gravity entities go to the original call,
-     * which Physgun Unbound redirects for the entities it turns; an entity in
-     * another gravity that the physgun also turns gets this frame's shadow.
-     * inject_render_2 has already applied the player->world physics rotation
-     * to the pose (needed for hitbox rendering), so it is undone around the
-     * shadow rendering either way.
+     * The vanilla circle shadow is a contact shadow at the feet, not a sun's (it is there at night and under a
+     * torch), so a body this mod holds to a wall or a ceiling keeps it at its feet, on the face it stands on, the
+     * normal size and shape (the owner, 2026-10-27; until then it was treated as a stand-in for sunlight that must
+     * not rotate with gravity, an ellipse on the ground under the model). Camafy's {@link BlobShadow} draws that for
+     * a held body (Camafy's gravity bridge says the pull), along its own down on the ship it stands on or on the
+     * world's own blocks, from this mod's blob here. For a turned body a field doesn't hold (a frame still turning)
+     * the blob is the elliptical, model-centred one on the ground below, the long axis along the model's
+     * world-horizontal lying direction, growing toward half the model height as the model tips over. Ordinary-gravity
+     * entities go to the original call, which Physgun Unbound redirects for the entities it turns; an entity in
+     * another gravity that the physgun also turns gets this frame's shadow. inject_render_2 has already applied the
+     * player->world physics rotation to the pose (needed for hitbox rendering), so it is undone around the shadow
+     * rendering either way.
      */
     @WrapOperation(
         method = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;render(Lnet/minecraft/world/entity/Entity;DDDFFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V",

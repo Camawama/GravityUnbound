@@ -54,7 +54,8 @@ import net.minecraft.world.phys.Vec3;
  * reads a free fall as weightless). Riders and what a ship carries (Valkyrien Skies drags it) aren't turned: a seat or
  * a deck carries them, and a deck's riders keep only the force.</p>
  *
- * <p><b>Who.</b> Every entity Genesis flagged no-gravity in its space, on the side that moves it (the server for mobs
+ * <p><b>Who.</b> Every entity without a gravity of its own in Genesis's space (flagged no-gravity by Genesis, or in a
+ * world Ad Astra makes weightless, as the "Genesis x Ad Astra" add-on does: {@link #weightlessHere}), on the side that moves it (the server for mobs
  * and things, the client for its own player, and the client's prediction of non-living things, as the zero-g field
  * pull does): not passengers (their vehicle or ship carries them), creative fliers, spectators, swimmers, entities a
  * gravity field holds (the field replaces gravity where it reaches, as it does on a planet) or entities another mod
@@ -444,8 +445,12 @@ public final class CelestialGravity {
                     null, null, null, 1.0, null, true);
             }
             // things are pulled here, down the pull itself, once a tick (the capability's zero-g field force would
-            // take the strength it had before this field reached it: a full g for the first tick)
-            if (entity instanceof LivingEntity || foreignMotion || !movesHere(entity) || !comp.tryClaimArtificialPull(now)) {
+            // take the strength it had before this field reached it: a full g for the first tick); where Ad Astra makes
+            // the world weightless the field restores their own gravity (AdAstraCompat answers Earth gravity for a
+            // fielded entity, and their gravity constant is scaled by the field's strength), so that is their pull
+            if (entity instanceof LivingEntity || foreignMotion || !movesHere(entity)
+                || net.camacraft.gravityunbound.compat.AdAstraCompat.restoresGravityFor(entity)
+                || !comp.tryClaimArtificialPull(now)) {
                 return;
             }
         }
@@ -482,13 +487,31 @@ public final class CelestialGravity {
         return pull;
     }
 
-    /** Never pulled: passengers, creative fliers, spectators, swimmers, things Genesis didn't make weightless. */
+    /** Never pulled: passengers, creative fliers, spectators, swimmers, things that keep a gravity of their own here. */
     private static boolean excluded(Entity entity) {
-        if (entity.isPassenger() || !entity.isNoGravity() || entity.isInWater() || entity.isInLava()) {
+        if (entity.isPassenger() || !weightlessHere(entity) || entity.isInWater() || entity.isInLava()) {
             return true;
         }
         return entity instanceof Player player && (player.isSpectator() || player.getAbilities().flying);
     }
+
+    /**
+     * Whether the entity has no gravity of its own in Genesis's space, so the bodies' pull is all it feels: Genesis flags
+     * everything there no-gravity, unless the "Genesis x Ad Astra" add-on (in the owner's main pack) cancels that flag
+     * and has Ad Astra make the world weightless instead. Checking the flag alone, nothing in that pack was ever pulled
+     * or turned (only ships, which don't go through it): the owner's "celestial bodies are pulling with gravity, but are
+     * not rotating entities towards them", 2026-10-30. {@code -Dgravityunbound.celestialAdAstraWeightless=false} goes
+     * back to the flag alone for an A/B.
+     */
+    private static boolean weightlessHere(Entity entity) {
+        if (entity.isNoGravity()) {
+            return true;
+        }
+        return AD_ASTRA_WEIGHTLESS && net.camacraft.gravityunbound.compat.AdAstraCompat.zeroGravityWorld(entity.level());
+    }
+
+    private static final boolean AD_ASTRA_WEIGHTLESS =
+        !"false".equalsIgnoreCase(System.getProperty("gravityunbound.celestialAdAstraWeightless"));
 
     /** Valkyrien Skies carries it with a ship it stands on (or stood on a moment ago): it keeps its frame. */
     private static boolean carriedByShip(Entity entity) {

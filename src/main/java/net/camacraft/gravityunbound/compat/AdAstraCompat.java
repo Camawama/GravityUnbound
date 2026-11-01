@@ -143,6 +143,20 @@ public final class AdAstraCompat {
         }
     }
 
+    /** Ad Astra's own zero-gravity line: below this fraction of Earth its travel hook floats the living. */
+    private static final float ZERO_GRAVITY = 0.05f;
+
+    /**
+     * Whether Ad Astra makes this world weightless (its gravity under {@link #ZERO_GRAVITY}): an orbit, or VS Genesis's
+     * space where the "Genesis x Ad Astra" add-on (genesis_ad_astra 0.4) has Ad Astra answer 0 for Genesis's mini-scale
+     * worlds and cancels Genesis's own {@code setNoGravity(true)}, so nothing there is flagged no-gravity. The world's
+     * value, never the entity's: Ad Astra's per-entity answer goes through {@code EntityGravityEvent}, which this class
+     * answers with Earth gravity for an entity a field holds (a celestial body's field included).
+     */
+    public static boolean zeroGravityWorld(Level level) {
+        return active && planetGravity(level) < ZERO_GRAVITY;
+    }
+
     /**
      * True when Ad Astra is the reason this entity has reduced gravity and
      * the listeners above already restore Earth gravity inside fields — the

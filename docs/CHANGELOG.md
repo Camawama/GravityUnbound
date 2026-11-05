@@ -2,19 +2,19 @@
 
 ## 2.0.0.6 — 2026-10-30 (celestial gravity with the "Genesis x Ad Astra" add-on)
 
-The owner (2026-10-30): "I noticed that celestial bodies are pulling with gravity, but are not rotating entities towards them while in the great unknown from vs genesis, but I thought we added this at one point."
+Reported (2026-10-30): celestial bodies pulled with gravity but did not turn entities toward them in VS Genesis' Great Unknown.
 
-- **Cause:** the owner's main pack has the "Genesis x Ad Astra" add-on (genesis_ad_astra 0.4.0; uhhh clean doesn't). It cancels VS Genesis' `Entity.setNoGravity(true)` in space (a no-op wrapped round Genesis' call) and makes space weightless through Ad Astra's gravity instead (0 for Genesis' mini-scale worlds). The bodies' pull on entities (`CelestialGravity`) skipped every entity not flagged no-gravity, so in that pack no player, mob or item was pulled or turned by a body; ships were (they don't go through it), which is the pull the owner saw. Pack harness `gu_celestial` in the main pack (owner's JVM, Java 21 ZGC): 13 problems, the player, a pig and an item 3 of Earth's radii out gained 0 toward Earth (the law: 0.019, 0.015, 0.007 blocks/tick), a free player and a pig 2.5 radii out never turned (90 degrees), a departed player never turned after the grace.
+- **Cause:** the main pack has the "Genesis x Ad Astra" add-on (genesis_ad_astra 0.4.0). It cancels VS Genesis' `Entity.setNoGravity(true)` in space (a no-op wrapped round Genesis' call) and makes space weightless through Ad Astra's gravity instead (0 for Genesis' mini-scale worlds). The bodies' pull on entities (`CelestialGravity`) skipped every entity not flagged no-gravity, so in that pack no player, mob or item was pulled or turned by a body; ships were (they don't go through it), which is the pull that was seen. Pack harness `gu_celestial` in the main pack (Java 21, ZGC): 13 problems, the player, a pig and an item 3 of Earth's radii out gained 0 toward Earth (the law: 0.019, 0.015, 0.007 blocks/tick), a free player and a pig 2.5 radii out never turned (90 degrees), a departed player never turned after the grace.
 - **Fix:** an entity counts as weightless in Genesis' space when it is flagged no-gravity or Ad Astra makes its world weightless (`CelestialGravity.weightlessHere`, `AdAstraCompat.zeroGravityWorld`: the world's Ad Astra gravity under 0.05, Ad Astra's own zero-g line; the world's value, since Ad Astra's per-entity answer reads Earth gravity for any entity a field holds, the bodies' own field included). In a turning field, things (items, arrows) take no extra pull where Ad Astra restores their own gravity under the field (`AdAstraCompat.restoresGravityFor`), as plating and cores already do. `-Dgravityunbound.celestialAdAstraWeightless=false` goes back to the flag alone for an A/B.
-- **Measured after** (`gu_celestial` in the main pack with this jar and Camafy 0.1.64 by `--override`, owner's JVM; `MODS\PACK HARNESS\tools\round10-space\runs\turn1` before, `turn2` after): 13 problems down to 7, none of them a missing pull or turn. The player 3 radii out gains 0.01907 blocks/tick toward Earth against the law's 0.0191 (0.999; before 0), twice that at `gravityScale` 2 (0.999); the free player 2.5 radii out turns to Earth in 8 ticks (0.16 degrees off at the end; before it stayed at 90), the pig in 2 s (0.01 degrees); the departed player stays upright through the grace (90 to 91.3 degrees) and turns once it is over (tick 471, 0.09 degrees). A pig and an item read 0.656 of the law: exactly what half their ticks give (the main pack's Immersive Optimization ticks unwatched mobs and items at a reduced rate; players are exempt), so the pull per entity tick is the law. Rafts 0.986 / 0.993 (before 0.69 / 0.44, when the server ran 39 ticks in a 60-tick window). The rest is outside this change: the free player's first camera step after the teleport into space is 47 degrees (frames come sparse while the main pack's client loads space; flagged as a jerk), an item with no pull still drifts away (-0.019, as before), and the overworld pig test (Immersive Optimization's tick rates). Pack harness `spacespin_launch` (new): a player who floated off a raft in space turned to Earth once the grace was over (up 0.1 degrees from away-from-Earth; before 90, pull 0).
-- **What the owner sees (by design, unchanged):** a player seated on a ship or standing on its deck is carried by the ship and keeps the ship's frame (the ship is pulled, the rider with it); the 20 s departure grace holds the planet just left off a ship and its riders; below a tenth of Earth's gravity at the traveller's scale (beyond 3.2 of Earth's radii) a body only pulls, it doesn't turn. Genesis drops a ship 2.4 radii from Earth (0.17 g): a player who floats off the deck there turns toward Earth once the grace is over.
+- **Measured after** (`gu_celestial` in the main pack with this build and Camafy 0.1.64): 13 problems down to 7, none of them a missing pull or turn. The player 3 radii out gains 0.01907 blocks/tick toward Earth against the law's 0.0191 (0.999; before 0), twice that at `gravityScale` 2 (0.999); the free player 2.5 radii out turns to Earth in 8 ticks (0.16 degrees off at the end; before it stayed at 90), the pig in 2 s (0.01 degrees); the departed player stays upright through the grace (90 to 91.3 degrees) and turns once it is over (tick 471, 0.09 degrees). A pig and an item read 0.656 of the law: exactly what half their ticks give (the main pack's Immersive Optimization ticks unwatched mobs and items at a reduced rate; players are exempt), so the pull per entity tick is the law. Rafts 0.986 / 0.993 (before 0.69 / 0.44, when the server ran 39 ticks in a 60-tick window). The rest is outside this change: the free player's first camera step after the teleport into space is 47 degrees (frames come sparse while the main pack's client loads space; flagged as a jerk), an item with no pull still drifts away (-0.019, as before), and the overworld pig test (Immersive Optimization's tick rates). Pack harness `spacespin_launch` (new): a player who floated off a raft in space turned to Earth once the grace was over (up 0.1 degrees from away-from-Earth; before 90, pull 0).
+- **By design (unchanged):** a player seated on a ship or standing on its deck is carried by the ship and keeps the ship's frame (the ship is pulled, the rider with it); the 20 s departure grace holds the planet just left off a ship and its riders; below a tenth of Earth's gravity at the traveller's scale (beyond 3.2 of Earth's radii) a body only pulls, it doesn't turn. Genesis drops a ship 2.4 radii from Earth (0.17 g): a player who floats off the deck there turns toward Earth once the grace is over.
 
 ## 2.0.0.5 — 2026-10-26 (a push between bodies under UP gravity)
 
-The owner (2026-10-26): "when an npc is pushable and on gravity plating on a valkyrien skies ship, if I try pushing the npc, it pushes towards me instead of away, which causes a cascade of pushing" — the ship was upside down, both on the plated deck face, so both under UP gravity. This mod's `Entity.push(Entity)` (`EntityMixin.inject_pushAwayFrom`) worked each side's push out in the player convention (`vecWorldToPlayer`), but `Entity.move` reads a settled non-player's velocity in the entity convention (`vecEntityToWorld`, kept from the original mod), and the two differ exactly for UP: x is negated in one and not the other. So the push a mob got on an upside-down deck was mirrored in x, toward the pusher when they stood along x, and with the two still overlapping it was pushed again every tick. Players were right all along (their velocity goes through the visual frame on both sides).
+Reported (2026-10-26): a pushable NPC on gravity plating on a Valkyrien Skies ship was pushed toward the player instead of away, in a cascade of pushes. The ship was upside down, both on the plated deck face, so both under UP gravity. This mod's `Entity.push(Entity)` (`EntityMixin.inject_pushAwayFrom`) worked each side's push out in the player convention (`vecWorldToPlayer`), but `Entity.move` reads a settled non-player's velocity in the entity convention (`vecEntityToWorld`, kept from the original mod), and the two differ exactly for UP: x is negated in one and not the other. So the push a mob got on an upside-down deck was mirrored in x, toward the pusher when they stood along x, and with the two still overlapping it was pushed again every tick. Players were right all along (their velocity goes through the visual frame on both sides).
 
 - `Entity.push(Entity)` now takes each side's push into that body's own convention (`gravityunbound$worldToLocalOf`: the entity convention for a settled non-player, the visual frame for everyone else, as `move` reads them), so a mob, an NPC or an item pushed under UP gravity goes away from what pushed it.
-- Measured (pack harness `npc_push`, new, laneless: a pushable Camafy NPC and the player on plain ground, a plated wall, a static raft's deck, a plated deck, a raft carrying a plated wall, a plated raft under way at 2 m/s, and a plated raft upside down with both on its deck face; the server drives the player into the NPC and reads the NPC's move along the line between them): with 2.0.0.4 on the upside-down deck the player was drawn 3.8 blocks along the line through the NPC (the gap was 1.5) while the NPC went 0.5 away; with this build the player is held off at 0.6 and the NPC goes 0.9 away, and every other rig is unchanged (`away` 0.75 to 1.13), in uhhh clean and in the main pack.
+- Measured (pack harness `npc_push`: a pushable Camafy NPC and the player on plain ground, a plated wall, a static raft's deck, a plated deck, a raft carrying a plated wall, a plated raft under way at 2 m/s, and a plated raft upside down with both on its deck face; the server drives the player into the NPC and reads the NPC's move along the line between them): with 2.0.0.4 on the upside-down deck the player was drawn 3.8 blocks along the line through the NPC (the gap was 1.5) while the NPC went 0.5 away; with this build the player is held off at 0.6 and the NPC goes 0.9 away, and every other rig is unchanged (`away` 0.75 to 1.13), in uhhh clean and in the main pack.
 
 ## Unreleased (2.0.0-dev) — 2026-10-24 (VS Genesis's bodies pull: gravity in space, the departure grace, body worlds)
 
@@ -26,17 +26,17 @@ The requirements (2026-10-23): everything should feel gravity by default, with c
 - **The departure grace.** Genesis drops a ship a planet's size plus 20 blocks from its centre (2.4 radii for Earth) with a sixteenth of its speed: 60 m/s up becomes 3.75 m/s, under the 5 m/s escape speed there, so the planet would start turning it round at once. The planet a ship (and its riders) just left (`Celestials.departure`, recorded by Camafy at Genesis's teleporter; the server tells a player's client of its own with the new clientbound `CelestialDeparturePacket`, channel protocol 4, every time the player comes into space, since the client moves its own player) doesn't pull it for `celestialDepartureGraceSeconds` (20 s: at 1 m/s² of spare thrust a ship goes 200 blocks in that time) or until it is `celestialDepartureClearFactor` (2) times as far from the centre as it arrived (4.8 radii for Earth, where the pull is a twenty-third of the surface's), whichever comes first, and the pull comes back over `celestialDepartureRampSeconds` (5 s). Every other body pulls from the first tick. A ship that coasts without thrust still falls back after that, as it should. A departure older than the grace and its ramp holds nothing (Camafy keeps the record until the traveller lands, which a ship that came back some other way never does). `-Dgravityunbound.celestialDepartureGrace=false` turns the grace off for a run.
 - **Settings read when they apply.** A body's `gravityScale` and reach are read from Camafy's settings each time (`CelestialGravity.settings`), not from Camafy's body snapshot: the snapshot is refreshed when Genesis's clock moves, and that clock stands still with `doDaylightCycle` off, so a `/planet gravity` change didn't reach the pull until time moved again (the first harness run).
 - **Body worlds' gravity** (`celestialSurfaceGravity`, on): a world that is a Genesis body (a Camafy runtime planet or moon: the moon's 0.16) has that body's surface gravity, down, as this mod's dimension gravity (`DimensionGravity.bodyEntry`, below a `dimensionGravity` entry or an API registration for the world, never where Ad Astra gives the world its own gravity), and the ships there fall at it too (an extra `(body - 1) × g × mass` on each ship not held by a field). Earth's 1.0 changes nothing.
-- **Measured** (pack harness, new `gu_celestial`, laneless, not in `all`: the installed pack with Camafy 0.1.50's jar and this one by `--override`, `--without distanthorizons`; `results-20261024-011036.json`, the second and third runs alike, `problems` empty):
+- **Measured** (pack harness `gu_celestial` with Camafy 0.1.50, `problems` empty):
   - Three of Earth's radii from its centre in the Great Unknown, let go for 60 ticks: a 3x3 stone raft 0.0681 m/s² toward Earth where the law gives 0.0691 (0.99); a pig 0.0195 blocks/tick after vanilla's drag against 0.0196 (0.99); a dropped item 1.00; the player, pulled by its own client, 0.997; Camafy's `Gravity.acceleration` for the pig and the player 0.00055 blocks/tick² toward Earth (the law: 0.08 × 1/16 × 1/9). Earth's reach set to 2 radii through Camafy: all four 0. Its `gravityScale` at 2: 0.988 to 1.0 of twice the pull. `/gravity celestial` named Earth.
   - Two of the sun's radii out: a raft 0.309 m/s² against 0.313 (0.99).
   - The climb (the player seated on a Create seat on a 3x3 raft driven up at 60 m/s past Genesis's exit): Genesis put it 2.42 radii from Earth's centre at 3.73 m/s outward (a sixteenth of 60). With the grace it kept 3.74 m/s at 5, 15 and 19 s, the pull came back after 20 s (3.52 m/s at 29 s) and it was 4.58 radii out after 30 s; without it (the property set live) 3.35, 2.66, 2.45 and 2.01 m/s, 4.05 radii. The client was told of the departure both times. Standing on the deck instead of seated (40 m/s, 2.50 m/s in space): the raft kept its speed for 20 s; the client's own pull on its player was 0 two seconds after arriving and Earth's again (0.00087 blocks/tick²) at 25 s.
-  - The turn (`results-20261024-054139.json`, with the turn; Camafy 0.1.50 from `JARS`): the player teleported from Earth to 2.5 radii east of it (0.16 g toward it, 90 degrees from its frame) was turned to it in 7 ticks; the camera turned at most 15.0 degrees a tick of game time (the turn's own rate, 90 degrees in 300 ms) and 6.1 on average, so no frame jerked however unevenly the frames came (its largest step in one frame, 12.9 degrees, is the first frame after arriving, a long one); after the turn the camera kept still (0.07 degrees a frame at most). A pig there was turned to Earth within 2 s (0.01 degrees off). A player put 2.5 radii south of Earth with a departure from it just recorded stayed upright for the whole grace (90 degrees from Earth's down at every frame to 18 s, no pull reported) and turned as the grace ramped out (23.5 s after arriving, 15.05 degrees a tick at most). Seated riders of a raft that left Earth kept an upright frame 25 s into space; the standing player Genesis left floating behind its raft was turned to Earth after the grace. The same windows as before, three radii from Earth with the turn on (0.11 g): raft 0.975, pig 0.999, item 1.00, player 0.999 of the law; twice Earth's gravity: 0.977, 0.999, 1.00, 0.999.
+  - The turn (Camafy 0.1.50): the player teleported from Earth to 2.5 radii east of it (0.16 g toward it, 90 degrees from its frame) was turned to it in 7 ticks; the camera turned at most 15.0 degrees a tick of game time (the turn's own rate, 90 degrees in 300 ms) and 6.1 on average, so no frame jerked however unevenly the frames came (its largest step in one frame, 12.9 degrees, is the first frame after arriving, a long one); after the turn the camera kept still (0.07 degrees a frame at most). A pig there was turned to Earth within 2 s (0.01 degrees off). A player put 2.5 radii south of Earth with a departure from it just recorded stayed upright for the whole grace (90 degrees from Earth's down at every frame to 18 s, no pull reported) and turned as the grace ramped out (23.5 s after arriving, 15.05 degrees a tick at most). Seated riders of a raft that left Earth kept an upright frame 25 s into space; the standing player Genesis left floating behind its raft was turned to Earth after the grace. The same windows as before, three radii from Earth with the turn on (0.11 g): raft 0.975, pig 0.999, item 1.00, player 0.999 of the law; twice Earth's gravity: 0.977, 0.999, 1.00, 0.999.
   - The overworld at Earth's `gravityScale` 0.5 (Camafy's settings): a pig dropped there fell at 0.500 of its speed at 1, a raft at 0.545 of its acceleration (8.63 against 4.70 m/s²; VS's own drag on a falling ship makes the full-gravity raft 8.6, not 10).
 - **Open:** Full Stop's airless places now hurt a mob that breathes in space (2 every 12 ticks once its air is out; the harness's pigs died of `fullstop.atmosphere` after 15 s and are now invulnerable there). A player or mob pulled into a planet's cube in space isn't landed by Genesis (it lands only ships), so it passes through the cube and, with vanilla's air drag, comes to rest near the centre. A free-falling ship's riders standing on its deck are still pressed to it by the pull, as Valkyrien Skies has them on a planet (VS carries the rider and the pull acts on the rider as well). On a body world with a gravity other than Earth's every entity is "in a field" for this mod (the world's gravity is a dimension-gravity effect, as with `dimensionGravity` entries), so a flying bee, allay or parrot (vanilla flags them no-gravity in flight) is pulled down there by the deficit pull. In the standing climb Genesis left the player behind the raft (it arrived without the raft's speed; Camafy 0.1.50's travel-motion work came after the jar tested here).
 
 ## Unreleased (2.0.0-dev) — 2026-10-23 (idle mobs, a second look)
 
-After the pack perf test (2026-10-23), a look at this mod's cost for idle mobs. With 400 passive mobs with their AI (pack harness `perf_pack`, spark every 5 ms over 30 s), the capability tick was 345 ms of the 30 s. Of that, 100 ms is Camafy's physics-claim ask (the callbacks MKW Mobility and Physgun Unbound register, left as they are). Two things in this mod went:
+A look at this mod's cost for idle mobs (2026-10-23). With 400 passive mobs with their AI (pack harness `perf_pack`, spark every 5 ms over 30 s), the capability tick was 345 ms of the 30 s. Of that, 100 ms is Camafy's physics-claim ask (the callbacks MKW Mobility and Physgun Unbound register, left as they are). Two things in this mod went:
 
 - **No arc cosine in the sync check.** `maybeSendSync` asked `angleBetween(lastSynced, target) > threshold` for every entity every tick, and the `acos` in it was 40 ms. `angleExceeds` asks the same question as |dot| < cos(threshold / 2), with the cosines worked out once; same answers, no `acos`.
 - **No attribute lookups for plain strength.** `applyGravityStrengthAttribute` looked up the `forge:entity_gravity` attribute and the field-strength modifier on every living entity every tick, to clear a modifier only a field ever puts there (20 ms). The modifier is transient, so a mob whose strength is plain and on which this capability never put one is skipped. Players are always looked at: a player revived from another may carry what its old self had.
@@ -51,22 +51,22 @@ The spark profiles of 2026-10-15 (a fresh world, no ship, no field, about 360 id
   - `advanceVisualRotation` keeps only its bookkeeping (the previous frame, the stable-ticks and ship-frame counters) when the frame is exactly the vanilla one with nothing pulling it: no field target but plain down, no held surface, no ship attached or anchored, no ship carry pending, no override, no reported client frame, not a passenger, no synced target but the identity (`frameSettledPlain`). The full path computes the identity target, steps nothing and unwinds nothing in that state.
   - A minecart resting on the ground (or a vanilla rail) in the cell where the last decision found no sticky rail re-reads the seven block states every ten ticks instead of every tick (`AbstractMinecartMixin`).
 - **Cached, for everyone** (no switch: nothing changes but the cost). The gravity-immune tag answer is kept per entity type and dropped when tags reload (`EntityTags`). The config values the per-entity and per-fluid code reads (`gravityStrengthMultiplier`, `gravityAffectsFluids`, `shipFieldsAffectWorldFluids`, the `dimensionGravity` list) are read when the config loads or reloads and once per level tick (`util.PerfSwitches`, `DimensionGravity.reload`), not per entity per tick: a Forge `ConfigValue.get()` walks the config's path under a lock. An entity's gravity capability is looked up once and kept on the entity (`capabilities.GravityCapCache`, `EntityMixin`, `GravityChangerAPI.getGravityComponentOrNull`), re-fetched when Forge has invalidated it (a removed entity, a player revived after a dimension change), so Full Stop's gravity reads through Camafy and this mod's own hooks pay no capability walk. `GravityFieldLookup.hasSources` remembers the last level's index (the registry is a synchronized weak map, asked several times per fluid spread), and the plating check in the water source-conversion wrap (`FlowingFluidMixin.noRotatedSourceConversion`) runs only when a field source is registered in the level.
-- **Measured** (pack harness `perf_mobs`, 900 mobs with AI spawned in a pen at night, 523 alive at the end, the installed pack with this build and Physgun's overriding; `results-20261017-170330.json`, 17:03-17:06; the switch flipped live, two rounds of 15 s each, the server thread sampled every 4 ms): the fast paths off, server tick mean 46.2 / 45.4 ms (95th percentile 54.3 / 55.1), `GravityCapabilityImpl` on 2.7% / 2.0% of the server thread's samples, everything of this mod 3.1% / 2.6%; on, 45.9 / 44.4 ms (54.2 / 53.4), 1.9% / 1.7% and 2.4% / 2.4%. So the switchable part takes about a quarter of the capability tick off (0.3 to 1.0 ms of a 45 ms tick in that rig, where Full Stop's per-entity pass and body collisions are 20 to 26% and the dead mobs' items 5 to 14%); the kept capability, the cached tag answer and the cached config reads are in both halves and can't be flipped live. The mobs knocked about (Full Stop's phases): 48.7 / 48.9 ms off, 47.7 / 48.0 on. Gametests: all pass but `riderKeepsHeadingWithItsVehicle`, which fails identically at the committed HEAD (a `git archive HEAD` export run under the same load): the boat falls out of the plot under the swept field and the rider stops riding; not this change.
+- **Measured** (pack harness `perf_mobs`, 900 mobs with AI spawned in a pen at night, 523 alive at the end, the installed pack with this build; the switch flipped live, two rounds of 15 s each, the server thread sampled every 4 ms): the fast paths off, server tick mean 46.2 / 45.4 ms (95th percentile 54.3 / 55.1), `GravityCapabilityImpl` on 2.7% / 2.0% of the server thread's samples, everything of this mod 3.1% / 2.6%; on, 45.9 / 44.4 ms (54.2 / 53.4), 1.9% / 1.7% and 2.4% / 2.4%. So the switchable part takes about a quarter of the capability tick off (0.3 to 1.0 ms of a 45 ms tick in that rig, where Full Stop's per-entity pass and body collisions are 20 to 26% and the dead mobs' items 5 to 14%); the kept capability, the cached tag answer and the cached config reads are in both halves and can't be flipped live. The mobs knocked about (Full Stop's phases): 48.7 / 48.9 ms off, 47.7 / 48.0 on. Gametests: all pass but `riderKeepsHeadingWithItsVehicle`, which fails identically on the previous build under the same load: the boat falls out of the plot under the swept field and the rider stops riding; not this change.
 
 ## Unreleased (2.0.0-dev) — 2026-10-13 (a core ship pulled down fast, a frozen paste, lag over the sea, VMod schematics)
 
-- **"When I turn a gravity core into a ship, it is pulled towards the ground extremely fast"** (the radius made no difference). Cause: 2026-10-12's fix for the floating cluster made the ship carrying a replacing field take the WEIGHT of every ship that field holds. Right for planks hanging round the core, but a held ship resting on the ground (or on another ship) loaded its weight onto the core all the same, and the core went down at g times one plus the held mass over its own: 34 m/s² for a core ship over a 3x3x2 stone raft pinned on the ground in its field (pack harness `gr3_core_fall`). Now only a held ship that TOUCHES the field's own ship, directly or through other held ships (their world boxes meet), is part of that body and loads it with its weight, so a core ship with planks round it still falls with them as one body and a resting or held core keeps them round it without sagging. A held ship that doesn't touch it loads nothing and keeps as much of the world's gravity as its carrier is falling (`CarrierMotion`: the carrier's acceleration, sampled and smoothed on the physics thread), so it goes down with a falling core and floats round a resting one. Same switch (`shipFieldsCarryWeight`, on; off: held ships are weightless). The field's pull itself still works both ways (Newton's third law), so a light core is drawn towards a heavy ship it holds.
-- **"After I tried pasting in that schematic, the world froze a few moments later."** Cause, from the log (the integrated server's watchdog, ticks of 40 s and 80 s): a ship-mounted core woke the world's liquid in one box joining where its field was at its last wake-up and where it is now. A pasted (or teleported) ship moves from where it was made to where it is put, so that box spanned the distance between, and it was walked chunk column by chunk column. The two boxes are now woken apart, and a box no field could cover is never walked.
+- **A gravity core turned into a ship was pulled towards the ground extremely fast** (the radius made no difference). Cause: the 2026-10-12 fix for the floating cluster made the ship carrying a replacing field take the WEIGHT of every ship that field holds. Right for planks hanging round the core, but a held ship resting on the ground (or on another ship) loaded its weight onto the core all the same, and the core went down at g times one plus the held mass over its own: 34 m/s² for a core ship over a 3x3x2 stone raft pinned on the ground in its field (pack harness `gr3_core_fall`). Now only a held ship that TOUCHES the field's own ship, directly or through other held ships (their world boxes meet), is part of that body and loads it with its weight, so a core ship with planks round it still falls with them as one body and a resting or held core keeps them round it without sagging. A held ship that doesn't touch it loads nothing and keeps as much of the world's gravity as its carrier is falling (`CarrierMotion`: the carrier's acceleration, sampled and smoothed on the physics thread), so it goes down with a falling core and floats round a resting one. Same switch (`shipFieldsCarryWeight`, on; off: held ships are weightless). The field's pull itself still works both ways (Newton's third law), so a light core is drawn towards a heavy ship it holds.
+- **The world froze a few moments after a schematic was pasted.** Cause, from the log (the integrated server's watchdog, ticks of 40 s and 80 s): a ship-mounted core woke the world's liquid in one box joining where its field was at its last wake-up and where it is now. A pasted (or teleported) ship moves from where it was made to where it is put, so that box spanned the distance between, and it was walked chunk column by chunk column. The two boxes are now woken apart, and a box no field could cover is never walked.
 - **Lag with a core ship over the sea** (the lag profile: 12 TPS, ticks of 1.1-1.25 s, `fluidDownAt` 38.8% of the server thread). A moving ship-mounted core (or plate) woke every liquid block in its field every eight ticks, 100,000+ at range 32 over the sea, and every woken block asked the field lookup about each neighbour. Now (`util.ShipFluidWaker`) only liquid that can move is woken (not a full source, or beside something that isn't a full source of the same liquid: the surface and the shore; an open-sea section is read at its faces only), only where this field's down changed since its last wake-up when the ship only moved (a full wake-up after a settings change and for the settle wake-ups), and a budget at a time, carried across ticks: new server config `shipFluidWakeBudget` (2,048 blocks a tick per dimension). The fluid lookup also has a cheap "no field here" answer: the level's index and the block columns any field can reach are worked out once a tick per thread, and a column no field reaches answers plain down after one set lookup (the synchronized index lookup, the tick memo, the game time and the ship walk were paid per call).
-- **VMod's toolgun copied the whole cluster** ("I only tried to copy the single ship slime block"). VMod's schematic copies the ship aimed at and every ship whose box touches it, transitively; a core's field pulls the ships it holds into contact with it and with each other. A contact where either ship is held by a field no longer joins them for VMod's walk (`mixin.compat.VModSchematicTouchMixin`, only with VMod; server config `vmodSchematicsSkipFieldContacts`, on); VMod's own connections still do.
+- **VMod's toolgun copied the whole cluster** when only the single slime-block ship was meant. VMod's schematic copies the ship aimed at and every ship whose box touches it, transitively; a core's field pulls the ships it holds into contact with it and with each other. A contact where either ship is held by a field no longer joins them for VMod's walk (`mixin.compat.VModSchematicTouchMixin`, only with VMod; server config `vmodSchematicsSkipFieldContacts`, on); VMod's own connections still do.
 
 ## Unreleased (2.0.0-dev) — 2026-10-10 (a core ship with forty planks round it: the physgun grab, the floating cluster)
 
 The test: a one-block gravity core ship (full field, strength 1.00) with over forty one-block oak plank ships pulled round it. Pack harness `grav_core_cluster` builds it (core 2,500 kg, planks 500 kg each, the forty nearest cells) and watches every physics step.
 
-- **"When I grab one of the ships with my physgun there is a brief moment where gravity no longer has an effect on the ships and they all start falling before being pulled back in."** Cause: a field's hold on a ship expired after ten physics ticks without a fresh list from the game thread (`GravityCoreForceInducer`, `EXPIRY_PHYS_TICKS`). Valkyrien Skies' physics thread doesn't wait for the game thread (VS's `synchronizePhysics` is off by default), so in any server lag spike of about 170 ms or more every ship a field held dropped out of it at once, fell, and was pulled back when the server caught up. A grab can bring such a spike (the harness's first grab took a 250 ms tick); the main pack has spikes of that size on its own (its server profile: 139 ms in the recorded minute, 7.9 s in the five before). Measured with the old jar: the 250 ms tick left 39 of the 40 planks without a field for 5 physics steps and they fell at up to 0.72 m/s against the core. Fix: a hold expires only once game ticks have passed without a fresh list (more than 2, and at least 6 physics ticks): a stalled or paused server ticks no game ticks, so the field holds through it. The same scenario now also stalls the server 400 ms on purpose: with the old jar 17 of 114 physics steps had planks without a field (all 40 at once), 14 with a plank falling faster than 1 m/s against the core (up to 3.2 m/s); with this one none (0 of 117, worst 0.001 m/s), and none in six physgun grabs either.
+- **Grabbing one of a field's ships with the physgun let every ship the field held fall for a moment before they were pulled back in.** Cause: a field's hold on a ship expired after ten physics ticks without a fresh list from the game thread (`GravityCoreForceInducer`, `EXPIRY_PHYS_TICKS`). Valkyrien Skies' physics thread doesn't wait for the game thread (VS's `synchronizePhysics` is off by default), so in any server lag spike of about 170 ms or more every ship a field held dropped out of it at once, fell, and was pulled back when the server caught up. A grab can bring such a spike (the harness's first grab took a 250 ms tick); the main pack has spikes of that size on its own (its server profile: 139 ms in the recorded minute, 7.9 s in the five before). Measured with the previous build: the 250 ms tick left 39 of the 40 planks without a field for 5 physics steps and they fell at up to 0.72 m/s against the core. Fix: a hold expires only once game ticks have passed without a fresh list (more than 2, and at least 6 physics ticks): a stalled or paused server ticks no game ticks, so the field holds through it. The same scenario now also stalls the server 400 ms on purpose: with the previous build 17 of 114 physics steps had planks without a field (all 40 at once), 14 with a plank falling faster than 1 m/s against the core (up to 3.2 m/s); with this one none (0 of 117, worst 0.001 m/s), and none in six physgun grabs either.
 - **"The entire cluster of ships (gravity core and all) act as though they are in zero gravity ... the gravity core should still be affected by the overworld gravity."** Cause: a field that replaces gravity cancels the world's gravity on each ship it holds, and that weight went nowhere: with forty planks weightless the only weight in the cluster was the core's own, spread over the mass of forty-one ships, so it fell at a ninth of g (measured: 1.11 m/s² with 2,500 kg of core and 20,000 kg of planks) and looked weightless. Blended fields were right all along, because there each plank keeps its own weight. Fix (`shipFieldsCarryWeight`, server config, on): the ship carrying a replacing field takes the weight of every ship it holds up, the opposite of the lift it gives them (shared by how hard each field pulls when several hold one ship; a world-mounted field's share goes to the world). A free core ship with its planks now falls as one body at g (measured: 10.0 m/s², planks still within 2.7 blocks of the core), and a core that rests on the ground or is held keeps its planks round it without sagging, carrying their weight, as a planet would. Momentum is kept: the lift on each held ship and the weight on its carrier are equal and opposite.
-- **A Create contraption drawn half black** (a bearing arm in the CAMA world; found with a harness mixin on `Entity.setBoundingBox`). The client's first gravity sync of every entity (`GravityCapabilityImpl.sync` -> `updateBoundingBox`) set its box to `makeBoundingBox()`, the entity's dimensions box, even with gravity untouched. A Create contraption's real box is its contraption's bounds (83x83 for that arm), set only in its `setPos`; a stopped bearing never calls that again, so the box stayed 1x1, Create and Flywheel lit only the light sections round it, and the rest of the arm drew black (with or without Colorful Lighting). Fix: `updateBoundingBox` rebuilds the box only under a rotated frame or the capsule, and once more on the way back to the default frame; an entity whose box was never rotated keeps its own (contraptions, hanging entities). Players and mobs in fields still get the rotated box. Checked with harness `owner_shiplight` in a copy of CAMA with the main pack: the contraption's client box is 21..104 x 23..106 (83x83) and the arm is lit along its whole length from above. Gravity Unbound's gametests: all pass but `riderKeepsHeadingWithItsVehicle`, which fails the same way on a `git archive HEAD` export (with `chickenStandsOnSideFace` intermittent there).
+- **A Create contraption drawn half black** (a bearing arm in a survival save; found with a harness mixin on `Entity.setBoundingBox`). The client's first gravity sync of every entity (`GravityCapabilityImpl.sync` -> `updateBoundingBox`) set its box to `makeBoundingBox()`, the entity's dimensions box, even with gravity untouched. A Create contraption's real box is its contraption's bounds (83x83 for that arm), set only in its `setPos`; a stopped bearing never calls that again, so the box stayed 1x1, Create and Flywheel lit only the light sections round it, and the rest of the arm drew black (with or without Colorful Lighting). Fix: `updateBoundingBox` rebuilds the box only under a rotated frame or the capsule, and once more on the way back to the default frame; an entity whose box was never rotated keeps its own (contraptions, hanging entities). Players and mobs in fields still get the rotated box. Checked with harness `owner_shiplight` in a copy of that save with the main pack: the contraption's client box is 21..104 x 23..106 (83x83) and the arm is lit along its whole length from above. Gravity Unbound's gametests: all pass but `riderKeepsHeadingWithItsVehicle`, which fails the same way on the previous build (with `chickenStandsOnSideFace` intermittent).
 - **Performance** (the main-pack server profile, 1,479 entities): `ServerEntityMixin` looked each tracked entity's gravity capability up twice a tick (1% of the server thread: a Forge capability lookup walks every mod's providers); it is now looked up once per tracked entity.
 
 ## Unreleased (2.0.0-dev) — 2026-10-04 (TPS lag with a gravity core on a ship among many ships)
@@ -77,21 +77,21 @@ The server profile "extreme tps lag with gravity core on vs ship" (60 s, mspt me
 - **Fix 1.** Only the ships that carry a field source are asked (`fieldShips`: worked out once a tick from the sources registered in ship grids, and again when one appears or goes), with the same box test VS's query makes and in the order VS walks its ships in, so the answer is the old one, also where two ships' fields reach one cell. No VS query is left in the path.
 - **Cause 2, the wake.** Still water has no ticks of its own, so a ship-mounted core or plate wakes the world liquid in its reach "every eight ticks while it flies" (2026-09-04). It did so for as long as it existed, flying or not: every liquid block in reach re-ticked every eight ticks for good (the profile's fluid ticks, and its 141 ms ticks: one in eight).
 - **Fix 2** (`util.ShipFluidWake`, core and plating). The wake runs every period while the field's box, the ship's turn or the block's settings change, for five more periods after the last change, and then one period in ten. A liquid that still has somewhere to go keeps ticking by itself, as any liquid does; nothing else is changed.
-- **Same behaviour, checked.** With `-Dgravityunbound.verifyShipFields=true` every uncached answer is also worked out the old way: 83,823 answers in the harness (three cores on moving and spinning ships whose fields overlap, 400 other ships round them), none different. The water under a core is block for block the same 100, 150 and 200 ticks after the core appears with the installed jar and with this one (450 sources, 115 flowing, same position hash, three sessions). Gametest `aFieldAtRestStopsWakingTheLiquidUnderIt`.
+- **Same behaviour, checked.** With `-Dgravityunbound.verifyShipFields=true` every uncached answer is also worked out the old way: 83,823 answers in the harness (three cores on moving and spinning ships whose fields overlap, 400 other ships round them), none different. The water under a core is block for block the same 100, 150 and 200 ticks after the core appears with the previous build and with this one (450 sources, 115 flowing, same position hash, three runs). Gametest `aFieldAtRestStopsWakingTheLiquidUnderIt`.
 - **Measured** (pack harness, new `perf_core`: static one-block ships in rings round a walled 15x15 pool, cores on ships hovering over it, 8 pigs and 16 items by the pool; server tick mean / 95th percentile / worst in ms):
-  - 150 ships, the installed jar: one core 19.2 / 46.9 / 68; three cores (alone, on a 3x3 and on a 7x7 deck) 24.7 / 65.5 / 166, moving 27.3 / 68.3 / 116, spinning 32.7 / 79.0 / 255, and later at rest 32.8 / 131 / 162; 5 to 18% of the server thread in the lookup, 7 to 28% in fluid ticks. This change (its first build) in the same script: one core 13.6 / 17.6 / 30, three cores 19.7 / 44.4 / 55.5, later at rest 13.7 / 14.3 / 68.
+  - 150 ships, the previous build: one core 19.2 / 46.9 / 68; three cores (alone, on a 3x3 and on a 7x7 deck) 24.7 / 65.5 / 166, moving 27.3 / 68.3 / 116, spinning 32.7 / 79.0 / 255, and later at rest 32.8 / 131 / 162; 5 to 18% of the server thread in the lookup, 7 to 28% in fluid ticks. This change (its first build) in the same script: one core 13.6 / 17.6 / 30, three cores 19.7 / 44.4 / 55.5, later at rest 13.7 / 14.3 / 68.
   - 400 ships, this build, the same rig switched live (`-Dgravityunbound.shipFieldsScanAllShips`, `-Dgravityunbound.shipFluidWakeAlways`): as before 51.1 / 161.8 / 204 (lookup 21.4%, fluid ticks 28.7%, the server never idle); the new lookup alone 42.6 / 93.9 / 110 (lookup 7.4%); both 36.1 / 46.9 / 90 (lookup 1.3%, fluid ticks 2.9%), which is what the 400 ships cost without any core (38.8 / 48.7 / 67: Valkyrien Skies 37% of the thread).
   - Moving and spinning cores still wake the water every period, as they must: 400 ships 43.0 / 63.6 / 86.5 and 42.5 / 59.2 / 77.2 (lookup 3.0 to 3.5%).
 - **Tests:** 21 gametests, 20 pass; `riderKeepsHeadingWithItsVehicle` ("the rider stopped riding") fails: rider code this change doesn't touch, the one failure known before it.
 
 ## Unreleased (2.0.0-dev) — 2026-10-03 (the car and camera flicking round on driving out of a field)
 
-A slow-motion video of 2026-10-03: driving off gravity plating, for a brief moment (one frame) the vehicle model and camera quickly rotate the yaw, while the player model keeps facing forward, and then it snaps back. Fixed once in September (the riders of a vehicle re-parametrized with it, `reparametrizePassengers`), back since 2026-10-01, when the client started simulating the car it drives (`shouldAcceptServerSync` false for it).
+Reported (2026-10-03, seen in slow motion): driving off gravity plating, for a brief moment (one frame) the vehicle model and camera quickly rotate the yaw, while the player model keeps facing forward, and then it snaps back. Fixed once in September (the riders of a vehicle re-parametrized with it, `reparametrizePassengers`), back since 2026-10-01, when the client started simulating the car it drives (`shouldAcceptServerSync` false for it).
 
 - **Cause:** when a vehicle re-parametrizes its frame (a twist about its own up, paid for with a matching yaw shift: `normalizeTwist`, its anchor snap, the cardinal change of a ridden vehicle), the vehicle is drawn unchanged, but its rider adopted the new frame the usual way in its own tick: the matching yaw shift spread over the tick (only a step over 45 degrees counts as atomic) while the twisted frame was drawn at once. For one tick the rider, and MKW's follow camera built from the rider's frame, swung away from the car by the whole twist and slid back; from behind, the car and the camera turn and the player model doesn't. September's fix re-parametrized the riders when the SERVER's re-parametrization packet arrived; since the client unwinds the car it drives itself, no packet does it any more.
 - **Fix:** a vehicle records the twists it re-parametrizes by in a tick (`noteReparamTwist`) and its riders take them at once, frame and yaw (and the yaw's interpolation start) together, before the usual smoothed adoption of the vehicle's real motion. Two companions, for the same 2026-10-01 change: a vehicle the client drives (`simulatedHere`, like the client player) no longer applies the server's echo of a twist it has already unwound itself (`syncFrameYawReparam`), and adopts the server's gravity direction only on a persistent disagreement (`sync`), as the client player does (each lagging packet at a field's edge flipped its cardinal back for a tick).
 - **Measured** (pack harness, new `car_field_exit`: an Automobility car driven along a plated stone wall and off its end, three speeds straight and one lane steering on the wall first; every frame as drawn, the car's heading from its render frame and drawn yaw, the rider's body heading, the camera): before, in the steering lane, the rider and the camera swung 14.9 degrees off the car in one frame at the release (tick 64) and slid back over the tick; after, the largest frame-to-frame step of the rider against the car 0.00 degrees and of the camera 0.21. The straight lanes were and stay clean (a pure roll about the heading turns nothing). Client and server yaw agreed within a degree on every tick, before and after.
-- **Looked at, not reproduced:** a video of a parked car sliding off the plating of a big ship moving in the Great Unknown (12:01). New harness `car_park_space` (a ship turning at 0.27 degrees a second, under the 0.016-degree-a-tick turn the ship carry treats as stationary, and moving at 20 m/s) and `car_park_cruise_space` (cruising at 30 m/s), a car parked for a minute at Genesis's 1/16: with the installed jar and the new one alike it never moved on the deck (0.0 blocks, anchored and carried every tick). On the turning ship its heading fell 14 degrees behind the deck's over the minute in both runs; a change that let the carry add up turns under that threshold made no difference to it and was taken back out. Open.
+- **Looked at, not reproduced:** a report of a parked car sliding off the plating of a big ship moving in the Great Unknown. New harness `car_park_space` (a ship turning at 0.27 degrees a second, under the 0.016-degree-a-tick turn the ship carry treats as stationary, and moving at 20 m/s) and `car_park_cruise_space` (cruising at 30 m/s), a car parked for a minute at Genesis's 1/16: with the previous build and the new one alike it never moved on the deck (0.0 blocks, anchored and carried every tick). On the turning ship its heading fell 14 degrees behind the deck's over the minute in both runs; a change that let the carry add up turns under that threshold made no difference to it and was taken back out. Open.
 
 ## Unreleased (2.0.0-dev) — 2026-10-02, evening (a car boarded on a rolling ship kept plain down)
 
@@ -102,22 +102,22 @@ Left open by the afternoon's work: in one `car_roll_space` run in six, getting i
 - **Fix:** `GravityPlatingBlockEntity.getUpdateTag` fills in the defaults the first tick would (`fillMissingSides`, server only, never overwriting a side that is set; it touches nothing but the plate, since a chunk packet may be built off the server thread under C2ME, and the plate's next server tick marks the chunk for saving; nothing is sent twice), so every chunk packet carries the plate's data whatever the timing. Cores and normalizers always write their settings and were never affected.
 - **Measured:** new gametest `aPlateSetWithoutDataReachesAClientBeforeItsFirstTick` (a plate set without data, its update tag fed to a fresh copy as the chunk packet would): with the fix off it fails, "the client's copy got no data from the chunk packet (update tag {})"; with it, passes (and `aPlatesOwnDataIsSentUnchanged`: a placed plate's own settings are sent as they are). Pack harness, new `car_board_roll` / `car_board_tiny` (20 boardings each at set roll angles, half within 20 degrees of upside down, both sides' gravity state every tick; `boardingsWrong` counts boardings where client and server disagree for more than 4 ticks) and `plate_sync_01..12` (a plated ship built and landed on: `clientPlatesWithoutData`):
   - `car_board_roll` and `car_board_tiny` with the fix: 40 boardings, none wrong (the longest disagreement 2 ticks, at the cardinal changes), the client's plates 121 of 121 with data in both.
-  - Every plated ship scenario now reports `platesWithoutDataAfterAssembly` (121 of 121 on every build: the window opens every time) and `clientPlatesWithoutData`: 0 in every ship built with the fix (the car scenarios below and 16 throwaway ships). The old jar's ships today happened to load too (about a dozen builds, and 20 boardings of `car_board_roll` right): the race fires roughly once in ten builds, which is why it took six runs to show; the gametest is the deterministic check.
-  - A copy of the test world (`owner_car`, `--world-copy`): the parked car through three tumbles, no snaps, 0.04 degrees a frame at most.
+  - Every plated ship scenario now reports `platesWithoutDataAfterAssembly` (121 of 121 on every build: the window opens every time) and `clientPlatesWithoutData`: 0 in every ship built with the fix (the car scenarios below and 16 throwaway ships). The previous build's ships can load too (the race fires roughly once in ten assemblies); the gametest is the deterministic check.
+  - A copy of a test world (`owner_car`): the parked car through three tumbles, no snaps, 0.04 degrees a frame at most.
   - Unchanged with the fix: `car_roll_space` / `car_roll_tiny` parked 0.04 / 0.25 degrees a frame at most, `car_space` parked 0.04, `car_spin60`, `car_cruise300`, `car_hop60` parked 0.04 and driving about 1 degree, `plating_car_spin` / `plating_car_cruise` 0.0 and carried every tick, `clockwork_car60` / `clockwork_car120` seated, looking and third person 0.0 against the car.
-- **Seen on the way, not fixed (not gravity code):** under heavy machine load, on a ship cruising at 30 m/s in the Great Unknown, the client sometimes loses the parked car entity altogether for a few seconds (`car_tumble_space` 63 and 82 ticks, `car_hop_space` 114, with the old jar and the new alike; the server keeps it, and its plates had their data): the server stops sending the car to the client, and when it comes back its drawn pose jumps. In one old-jar run it was lost for good while being driven. An earlier run of the same code didn't show it.
+- **Seen on the way, not fixed (not gravity code):** under heavy machine load, on a ship cruising at 30 m/s in the Great Unknown, the client sometimes loses the parked car entity altogether for a few seconds (`car_tumble_space` 63 and 82 ticks, `car_hop_space` 114, with the previous build and the new alike; the server keeps it, and its plates had their data): the server stops sending the car to the client, and when it comes back its drawn pose jumps. In one run on the previous build it was lost for good while being driven; another run of the same code didn't show it.
 
 ## Unreleased (2.0.0-dev) — 2026-10-02, afternoon (a parked car turned round on a ship rolling end over end)
 
-A video of 2026-10-02 12:40 (after the claim fix below was installed): an Automobility car parked on the plating of a small ship (5x5, at Genesis's 1/16) in the Great Unknown, the ship tumbling about a horizontal axis, a turn in some nine seconds. The car stayed on the deck but its heading snapped 180 degrees against the deck in a single frame, twice a turn.
+Reported (2026-10-02, after the claim fix below was installed): an Automobility car parked on the plating of a small ship (5x5, at Genesis's 1/16) in the Great Unknown, the ship tumbling about a horizontal axis, a turn in some nine seconds. The car stayed on the deck but its heading snapped 180 degrees against the deck in a single frame, twice a turn.
 
 - **Cause:** a non-living body's PHYSICS gravity is always a world axis (the nearest one to its field's down), and on a ship rolling end over end the deck's down passes between world axes four times a turn. At each crossing `applyGravityChange` re-expressed the yaw of a body nobody rides from the old cardinal frame to the new one (`compensateFrameChange(transported, canonical(new))`), which is right for a body whose frame snaps to the new cardinal. A car attached to a ship never snaps: its frame carries the ship's whole turn (since 2026-10-01) and its yaw is the heading in that frame, which clients rebuild with the frame. So every crossing turned the parked car on the deck by the crossing's twist, 90 or 180 degrees in one tick, on the server and then on every client. The harness's tumbling ships spun mostly about the vertical (`car_tumble*`: the deck's down stays within 36 degrees of world down), so their cardinal never changed and they never showed it; a ship that rolls over does.
 - **Fix:** at a cardinal crossing, a non-living body attached to a ship that nobody rides keeps its heading; only its local velocity (which moves in the cardinal frame) is re-expressed, keeping its world velocity exactly. A ridden vehicle keeps its existing re-parametrization (frame and yaw together, invisible), anything not attached to a ship keeps the old re-expression.
-- **Measured** (pack harness, new: `run-pack.py --world-copy` loads a copy of a save, `owner_car` watches the car nearest the player in it; `car_roll_space` / `car_roll_tiny` roll a ship end over end at 0.7 rad/s about the horizontal axis square to the parked car's heading, full size and at 1/16):
-  - A copy of the test world (ship `average-success-cassock`, 5x2x5 at 1/16), the ship tumbled about three axes: before, 7, 9 and 8 snaps of 90 or 180 degrees in 20 s each, the car's yaw jumping by exactly the crossing on both sides as its cardinal went south, down, west, up; after, none, the largest drawn turn against the deck 0.04 degrees a frame, the yaw unchanged on both sides through crossings into all six directions.
+- **Measured** (pack harness: `owner_car` watches the car nearest the player in a copy of a save; `car_roll_space` / `car_roll_tiny` roll a ship end over end at 0.7 rad/s about the horizontal axis square to the parked car's heading, full size and at 1/16):
+  - A copy of a test world (ship `average-success-cassock`, 5x2x5 at 1/16), the ship tumbled about three axes: before, 7, 9 and 8 snaps of 90 or 180 degrees in 20 s each, the car's yaw jumping by exactly the crossing on both sides as its cardinal went south, down, west, up; after, none, the largest drawn turn against the deck 0.04 degrees a frame, the yaw unchanged on both sides through crossings into all six directions.
   - `car_roll_space` / `car_roll_tiny`, the parked phases (spin-up, standing, parked again after driving): before, 180 degrees in one frame in every one; after, at most 0.07 degrees a frame at full size and 0.25 at 1/16, with no wander. Driving through crossings was already right (a ridden vehicle re-parametrizes frame and yaw together) and is unchanged.
   - Unchanged: `car_space`, `car_tumble_space`, `car_climb_space`, `car_hop_space`, `car_hop60`, `car_spin60`, `car_cruise300`, `plating_car_*` (parked and seated 0.0 to 0.06 degrees a frame, driving under 1 degree), `clockwork_car60/120` (seated, looking and third person 0.0 against the car).
-- **Open:** in 1 of 5 `car_roll_space` runs with the fix (and one earlier run without the per-tick rows), getting into the parked car while the ship was upside down left the DRIVER'S client computing the car's gravity as plain down (151 of 250 ridden ticks against the server's plating direction): the car swung some 140 degrees over a second as the player got in, and turned again on getting out. The server's state at that moment was identical to a run that stayed right, so it is a race in the client picking up the field for a car it has just started to drive (plausibly the plating's opposite-gravity guard, which tests the eye position, latching once a single tick reads down); not seen in 3 runs on the old jar, not proven to be new. Not fixed.
+- **Open:** in 1 of 5 `car_roll_space` runs with the fix (and one earlier run without the per-tick rows), getting into the parked car while the ship was upside down left the DRIVER'S client computing the car's gravity as plain down (151 of 250 ridden ticks against the server's plating direction): the car swung some 140 degrees over a second as the player got in, and turned again on getting out. The server's state at that moment was identical to a run that stayed right, so it is a race in the client picking up the field for a car it has just started to drive (plausibly the plating's opposite-gravity guard, which tests the eye position, latching once a single tick reads down); not seen in 3 runs on the previous build, not proven to be new. Not fixed.
 ## Unreleased (2.0.0-dev) — 2026-10-02, later (a car on plating in the Great Unknown turned about and floated off)
 
 The report: an Automobility car on gravity plating on a Valkyrien Skies ship in the Great Unknown looked fine at first, then its rotation randomly did a 180, then it started floating all around instead of staying locked to the relative ground. A regression from 2026-10-01's "the field stands down for claimed entities".
@@ -142,7 +142,7 @@ The report: an Automobility car on gravity plating on a fast spinning Clockwork 
 
 ## Unreleased (2.0.0-dev) — 2026-10-01 (a car on a ship that turns every way; flying out of a field; held entities)
 
-A video of 2026-09-30 22:55: an Automobility car on gravity plating on a ship that rotated and moved glitched out badly, rotating all weird ways, parked and driven. The pack harness had called the car exact the day before because it measured the server's heading against the ship's yaw, not what is drawn. New harness watch: the car's whole drawn orientation, read from the pose stack MKW's renderer draws the body with, against the ship's drawn rotation, every frame (`car_spin60`, and new `car_tumble` / `car_tumble_space`: a ship tumbling at (0.8, 3, 0.6) rad/s while moving at 30 m/s, at full size and at Genesis's 1/16).
+Reported (2026-09-30): an Automobility car on gravity plating on a ship that rotated and moved glitched out badly, rotating all weird ways, parked and driven. The pack harness had called the car exact the day before because it measured the server's heading against the ship's yaw, not what is drawn. New harness watch: the car's whole drawn orientation, read from the pose stack MKW's renderer draws the body with, against the ship's drawn rotation, every frame (`car_spin60`, and new `car_tumble` / `car_tumble_space`: a ship tumbling at (0.8, 3, 0.6) rad/s while moving at 30 m/s, at full size and at Genesis's 1/16).
 
 - **A car's heading wandered against a deck that rolled or pitched.** A non-living rider took only the swing of the ship's turn in its frame and got the rest through Valkyrien Skies' yaw delta, which is the ship's turn about WORLD up: exact for a ship spinning flat, wrong as soon as it also rolls or pitches (the parked car's heading wandered the whole circle against the deck in `car_tumble`). Now a non-living rider takes the ship's whole turn in its frame, like a living one, and keeps its heading in that frame: VS's yaw delta is no longer added to any attached rider, an attached non-living rider's frame is transported (rotated only by a change of up) instead of being rebuilt from the cardinal frame every tick, and its twist isn't unwound into the yaw while it rides; on leaving the ship the heading pays for the dropped twist once, so the body keeps facing where it faced.
 - **Clients rebuild a parked car's frame from the ship.** A client doesn't simulate a car it isn't driving; the server now sends the frame in the ship's own coordinates and the heading in it (`UpdateGravityCapabilityPacket`, network protocol 3; server and client need the same jar), and each client rebuilds the frame from its own pose of the ship every tick, takes frame and heading in the same tick, and draws them against the drawn deck. The driver's ship-frame report (`ShipVehicleMotionPacket`) sends the heading as it is when the car is held to that ship, instead of through VS's world-yaw conversion. `GuGravityProvider.ridesShipField` also answers for a client's copy of a held non-living body.
@@ -154,7 +154,7 @@ A video of 2026-09-30 22:55: an Automobility car on gravity plating on a ship th
 
 ## Unreleased (2.0.0-dev) — 2026-09-30 (a car on plating on a ship that spins and moves)
 
-A video: an Automobility car on gravity plating on a ship spinning and moving in the Great Unknown; its model stuttered its rotation, and at speed it was flung about even on the plating. Measured with the pack harness (`car_spin60`, `car_spin120`, `car_cruise300`: a car parked on the plating of a ship spinning at 60 or 120 RPM and cruising at 20 to 30 m/s, or cruising at 300 m/s; the player gets in and drives it about; each side's copy of the car and the car as drawn are sampled every tick and every frame, in the ship's own frame). Four causes, on both sides.
+Reported: an Automobility car on gravity plating on a ship spinning and moving in the Great Unknown; its model stuttered its rotation, and at speed it was flung about even on the plating. Measured with the pack harness (`car_spin60`, `car_spin120`, `car_cruise300`: a car parked on the plating of a ship spinning at 60 or 120 RPM and cruising at 20 to 30 m/s, or cruising at 300 m/s; the player gets in and drives it about; each side's copy of the car and the car as drawn are sampled every tick and every frame, in the ship's own frame). Four causes, on both sides.
 
 - **A parked vehicle's heading wandered against its deck.** Valkyrien Skies carries a vehicle's position with the ship every tick, and its yaw too, but Gravity Unbound suppressed VS's yaw for anything attached to a ship's field and put the ship's turn into the visual frame instead, to be moved into yaw later by the twist normalization - which is written for living riders (their look and body are compensated exactly) and never ran for a car, whose frame was held by the plating. So the car's yaw was carried by whatever else touched it: a parked car's heading drifted against the deck, sometimes by 18 degrees in a tick (the ship's whole turn), sometimes at twice the ship's rate, and the clients drew that. Now a non-living rider (a vehicle, a minecart, a boat, an item) keeps VS's yaw, projected onto its frame's up like any rotated frame's, and its frame takes only the SWING of the ship's turn (the tilt of the deck): on a deck spinning about its up the frame stays canonical and the model is drawn from the yaw alone, which the clients receive in the ship's axes and interpolate there. Harness: the parked car's heading against the ship, over 200 ticks at 60 and 120 RPM, 0.00 degrees start to end (was wandering the full circle); the drawn car's stray on the drawn deck 0.0 blocks, its largest frame step 0.0 (was 2 blocks and 0.2).
 - **Getting in flung the car off.** A vehicle its driver's client simulates reports its position with vanilla's vehicle move packet, in world coordinates from a client whose ship pose trails the server's by the network's delay. The server re-simulated that move against its own pose, found the car a tick of ship motion away, rejected it ("moved wrongly", every tick) and sent the client a correction: the car snapped back and forth by the ship's carry, was never on the ground or anchored on the server, and Full Stop read the jumps as the deck jolting under it and threw it with the deck's momentum every tick (a steady 8 m/s push per tick: off the deck within two seconds, then falling). Valkyrien Skies solves exactly this for players with ship-relative positions and has the same packet for the player's vehicle, but only sends it while the PLAYER's own dragging record names a ship, which lapses within a second of getting in (a passenger is not dragged). Gravity Unbound now sends the vehicle's own report in the ship's frame every tick the vanilla packet goes (`network.ShipVehicleMotionPacket`: its place and heading in the ship's axes, from the vehicle's attachment or its own dragging record; network protocol 2, server and client need the same jar); the server places it by its current ship pose, exact whatever the delay, registers it with VS's dragging so the end-of-tick carry keeps it there, and skips the vanilla vehicle move while that placement is fresh (its position is stale and its checks meaningless for a body the ship carries; the floating-vehicle kick is stood down for it). The driver's client also computes the vehicle's own fields now, like the local player's body: it is attached to the ship's field, kept riding, and carried with its whole step (its driving happens in the ship's frame). Harness: the car with the player in it, over 40 ticks at 60 and 120 RPM and at 300 m/s, drift on the deck 0.000, carried and anchored on both sides every tick, never thrown (was thrown every tick, 6 to 28 blocks off and falling within 40 ticks); driving it about the deck it stays carried and anchored every tick, its largest tick step is its own speed (0.3 blocks), the drawn car's largest frame step 0.03 blocks, its change of drawn speed within a tick 0.001 blocks/s.
@@ -166,7 +166,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 - **One shadow code with Physgun Unbound.** The rotated shadow of a body in another gravity (the ellipse along the way it lies, centred under the model's middle, fading from its lowest point) is drawn by Camafy 0.1.16's `client.render.BlobShadow` now, the port of vanilla's shadow that used to live in this mod's dispatcher mixin; the mixin only works out the blob from the gravity frame (the same centre, axis, radii and lowest point as before). Physgun Unbound draws a turned entity's shadow with the same code; an entity in another gravity that the physgun also turns gets this mod's frame. Builds against Camafy 0.1.16 (`[0.1.16,0.2)`).
 - **The server crashed ("Ticking entity", a `ConcurrentModificationException` out of `Level.getEntities`) with an Automobility car on the plating of a fast ship.** Not the car's fault, nor MKW's: Valkyrien Skies handles the packets its clients send on the network thread. Its Forge channel consumer calls the core's `onReceiveServer` straight from Forge's dispatch (the Netty IO thread) and never hands the work to the server thread the way every vanilla packet does. The handler for `PacketPlayerShipMotion`, which every client on a ship sends once a tick, calls `ServerPlayer.setPos` with the position the client reports - and a `setPos` moves the player between the level's entity sections, a remove and an add on their lists, on the Netty thread while the server thread may be walking those lists for anyone's entity query. When it is, the walk throws and the server dies. MKW's ground probe looks for the entities around a car every tick, so it was the one caught; any mod's query could have been. `VSForgeNetworkingMixin` runs VS's server-side packet handling on the server thread (the packet's buffer kept alive across the hand-off; order kept, since it is the queue vanilla's own packets use, so a VS packet sent right after a move packet is still handled right after it). It targets the lambda VS 2.4.11 compiled its consumer to, so `GravityMixinPlugin` applies it only for that build and says so in the log otherwise. Measured in the real pack (Pack Harness, a watch on the level's entity sections in its new `EntitySectionMixin`): a player standing on a ship moved the sections from the "Netty Server IO" thread 2,536 times over seven short scenarios, every one from that handler and nothing else off-thread; with the fix, the server's sections saw no off-thread write in five further runs (18 scenarios, `sectionWatch offThread=0`). A run of the same scenarios with the previous jar, for comparison, showed the player-on-ship writes again (210 in one scenario) and the reported crouch damage twice as often. MKW's ground probe is guarded as well (its changelog).
-- **The camera stuttered inside a room on a fast ship** (videos of a plated ship spinning and moving fast, watched from behind). `CameraMixin` walks the eye back out of blocks toward the body, a guard for a TURNING frame (its eye height sweeps sideways mid-flip, into the floor or a wall). It ran for every rider a plate holds, on a level deck too, and tested the ship's blocks where the ship's last TICK pose put them while the eye sits where the ship is DRAWN this frame - up to 15 blocks apart at 300 m/s. On frames the two disagreed the eye read as "inside a block" and the camera was marched down toward the waist and back, frame by frame; in third person the view rays then clipped from the wrong place too. The ship test now uses the drawn pose, and an upright frame (the rotation within a tenth of a degree of identity) skips the march altogether: vanilla's eye is never checked against blocks, and there it is vanilla's. Measured in the real pack (Pack Harness `room_cruise300` and `room_cruise300_3p`: crouching inside a roofed 11 x 4 x 11 room on a plated ship at 300 m/s, first and third person; the camera's distance from the eye recorded every frame): standing still in first person the camera strayed 0.42 player heights from its place and jumped 0.9 heights between frames, its distance from the eye 0 to 1.62 blocks (the whole march); in third person it strayed 0.62 and jumped 0.95 heights, the zoom snapping between 2.5 and 4.0 blocks. Now 0.000 heights stray and 0.0 jump in first person (the eye left where vanilla puts it), and 0.0003 stray, 0.0 jump and a zoom steady at 2.504 in third person (the wall behind the camera, at its drawn place). The open deck at the same speed was steady before and after (`plating_cruise300_3p`).
+- **The camera stuttered inside a room on a fast ship** (reported on a plated ship spinning and moving fast, watched from behind). `CameraMixin` walks the eye back out of blocks toward the body, a guard for a TURNING frame (its eye height sweeps sideways mid-flip, into the floor or a wall). It ran for every rider a plate holds, on a level deck too, and tested the ship's blocks where the ship's last TICK pose put them while the eye sits where the ship is DRAWN this frame - up to 15 blocks apart at 300 m/s. On frames the two disagreed the eye read as "inside a block" and the camera was marched down toward the waist and back, frame by frame; in third person the view rays then clipped from the wrong place too. The ship test now uses the drawn pose, and an upright frame (the rotation within a tenth of a degree of identity) skips the march altogether: vanilla's eye is never checked against blocks, and there it is vanilla's. Measured in the real pack (Pack Harness `room_cruise300` and `room_cruise300_3p`: crouching inside a roofed 11 x 4 x 11 room on a plated ship at 300 m/s, first and third person; the camera's distance from the eye recorded every frame): standing still in first person the camera strayed 0.42 player heights from its place and jumped 0.9 heights between frames, its distance from the eye 0 to 1.62 blocks (the whole march); in third person it strayed 0.62 and jumped 0.95 heights, the zoom snapping between 2.5 and 4.0 blocks. Now 0.000 heights stray and 0.0 jump in first person (the eye left where vanilla puts it), and 0.0003 stray, 0.0 jump and a zoom steady at 2.504 in third person (the wall behind the camera, at its drawn place). The open deck at the same speed was steady before and after (`plating_cruise300_3p`).
 - **Valkyrien Skies' client packets are handled on the render thread** for the same reason as the server's (above): its client handler for an entity's ship motion moved a dropped item between the client level's entity sections from the Netty client IO thread (the harness's section watch caught it 34 times in one run), which can throw the same exception out of any entity query the render thread makes. With the client's packets on its own thread too, no off-thread section write was seen on either side in the runs that followed.
 - **The F3+B hitbox on the inventory's paper doll flashed between huge and right-sized at 1/16** (VS Genesis's space, on a ship). Vanilla draws an entity's world box after its renderer in the same pose, in the paper doll too; the doll is drawn upright and at its normal size whatever the entity's real size and frame (Camafy's portrait restore, Pehkui's doll scaling) while the box is the entity's world box, and the two never agree at 1/16: sixteen times the doll, over the inventory's slots and off the screen, one frame, the right size the next as the box was refreshed. There is no box that is right for a doll drawn at a size the entity isn't, so `EntityRenderDispatcherMixin` draws none on a GUI portrait (`GuiEntityRender.active()`); entities in the world keep theirs, and the capsule outline still shows on the doll. Measured in the real pack (Pack Harness `hitbox_plating` and `space_hitbox_tiny`, the inventory opened with F3+B on, every hitbox draw of the local player recorded): at 1/16 the doll's box was drawn 0.6 x 1.8 blocks with the player's own box 0.0375 x 0.1125 (247 frames); now no hitbox is drawn on the doll at all (0 draws in both scenarios), and the world's hitboxes are untouched.
 
@@ -191,7 +191,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 ## Unreleased (2.0.0-dev) — 2026-09-27 (zero gravity: VS Genesis, Ad Astra)
 
-- **Camafy 0.1.7 reads the real gravity, and our provider tells it what only we know.** `GuGravityProvider` now answers `strengthModifierId` (the `forge:entity_gravity` modifier that carries our strength, so Camafy doesn't count a potion's 0.7 twice as 0.49), `ownsGravity` (a field pulling an entity flagged no-gravity, as every entity in VS Genesis's space is: the field pull deficit for living ones, the zero-gravity field force for the rest) and `ambientStrength` (the config multiplier times `DimensionGravity`). New `GravityCapabilityImpl.isInField` / `strengthModifierId` / `pullsWeightlessThings`.
+- **Camafy 0.1.7 reads the real gravity, and this mod's provider tells it what only it knows.** `GuGravityProvider` now answers `strengthModifierId` (the `forge:entity_gravity` modifier that carries our strength, so Camafy doesn't count a potion's 0.7 twice as 0.49), `ownsGravity` (a field pulling an entity flagged no-gravity, as every entity in VS Genesis's space is: the field pull deficit for living ones, the zero-gravity field force for the rest) and `ambientStrength` (the config multiplier times `DimensionGravity`). New `GravityCapabilityImpl.isInField` / `strengthModifierId` / `pullsWeightlessThings`.
 - **Ship gravity moved to Camafy.** `util.ShipGravity.actingOn` delegates to Camafy's `ShipGravities` (VMod's per-ship vector, Genesis's zeroed space, VS's table, VLib's correction), so Full Stop's ship weight reads the same answer. `compat.GenesisCompat`, `VLibCompat` and `VModCompat` are gone.
 - **Fields in VS Genesis's space:**
   - The zero-gravity field force (items, carts, TNT, projectiles flagged no-gravity) now runs in both Genesis space dimensions whatever `artificialGravityDimensions` lists (the default list names `genesis:wormhole`, which doesn't exist, and missed `genesis:subspace`). It pulls each type by its own vanilla gravity (items 0.04, arrows 0.05, thrown things 0.03) instead of a living entity's 0.08, so an item no longer falls twice as fast in a Genesis field as under the same field anywhere else.
@@ -231,13 +231,13 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 - **Repositioning by gravity is flagged as a discontinuity** (Camafy 0.1.1 `PhysicsOwnership.markDiscontinuity`), so physics mods like Full Stop don't read the snap as velocity or bill it as an impact. This covers the legacy cardinal flip of identity-frame non-player entities (the turn about the rotation centre, and the velocity rotation when `rotateVelocity` is set), stepping out of blocks after a flip or a frame release, and the clearance step when Surface Cling lets go of a wall.
 - Camafy dependency raised to 0.1.1.
 
-## Unreleased (2.0.0-dev) — 2026-09-25 (round 90: the friend who stopped at the edge)
+## Unreleased (2.0.0-dev) — 2026-09-25 (the friend who stopped at the edge)
 
 - **Other players no longer freeze when they walk into a ship's field.** In multiplayer, a player who entered a gravity core's field on a Valkyrien Skies ship stopped moving on everyone else's screen, right at the field's edge. Their head and gravity frame kept turning, but their position didn't change again until they left the field. Their own client and the server were fine. Only the watchers' copies were stuck.
   - **Why.** While the server considers an entity carried by a ship, Valkyrien Skies stops sending vanilla movement packets for it and sends ship-relative `PacketEntityShipMotion` instead. A watching client applies those to a living entity only while its OWN copy of the entity counts as dragged: stood on a ship within the last 25 ticks, detected through `getOnPos()`. Under a rotated frame our `getOnPos` probe looks along the frame's down and returns a world position, where VS finds no ship. Mid-jump or in zero-g inside the field, nothing is stood on at all. Meanwhile the server kept the drag alive for as long as the player stayed in the field: the capsule registers ship ground every tick, and `updateShipAttachment` re-registers an airborne attached player every tick. So after 25 ticks the watcher dropped every packet. Once frozen it couldn't recover, because the frozen copy never moved somewhere the probe would find the ship. Head turns still came through, because VS's head lerp has no such gate.
   - **Fix.** Each `PacketEntityShipMotion` is VS's server stating that the entity is ship-carried right now, so a watching client now restarts the entity's drag window whenever one arrives (`compat.VSEntityDraggingInformationMixin`, on the setter the packet handler calls for every packet). Where VS detects the standing itself, nothing changes: that detection already resets the same counter every tick. After the last packet, the window still closes 25 ticks later. This covers mobs in ship fields as well as players.
 
-## Unreleased (2.0.0-dev) — 2026-09-17 (round 89: the heading a vehicle loses at the edge, the field that outlived itself)
+## Unreleased (2.0.0-dev) — 2026-09-17 (the heading a vehicle loses at the edge, the field that outlived itself)
 
 - **Driving a vehicle around a gravity-core cube keeps its heading.** Crossing from the top face to the north face, a boat turned round, drove back onto the top face, turned round again, and holding forward just bounced between the two. Players never saw it, and that is the tell: a player moves and aims in the CONTINUOUS visual frame, which is continuous by construction, while every other entity moves in the CARDINAL one (`GravityChangerAPI.getMovementRotation`) — and that frame JUMPS at a crossing. The stored yaw and local `deltaMovement` are in the old cardinal's reference, so the same numbers name a different world direction under the new one. Measured: yaw 180 pointing world `-Z` under `DOWN` still read as yaw 180 under the new cardinal, where it pointed straight UP. The crossing now carries them across.
   - **Parallel transport, not a re-projection.** Rounding an edge turns the frame by the rotation carrying the old down onto the new one, and the body turns rigidly with it — its yaw and velocity NUMBERS do not change, only the frame they are read in. What is left is the pure TWIST between that transported frame and the new cardinal's canonical one, and only that is re-parametrized: a difference about a SHARED down, where the yaw projection is exact. Re-projecting the world look straight into the new frame is degenerate here — across a ninety-degree change the old heading can lie along the new down, which names no yaw at all, and trying it aimed the boat into the face it had just left. Projectiles keep their own convention (world-space `deltaMovement`, cosmetic yaw).
@@ -249,7 +249,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 - **A field no longer outlives itself.** The held-surface sustain exists to BRIDGE effect-delivery dropouts (seconds of them on a fast-rotating ship), but nothing distinguished a dropout from a field that had stopped existing — and the remembered region deliberately survives the grace, so an entity resting on a surface still inside a plate's remembered column kept refreshing its own grace: probe, sustain, gravity active, probe. Indefinitely. A boat whose plating was removed under it never came upright again. The sustain now also requires that a source actually delivered within the last 60 ticks. Found because `boatLeavingWallFieldIsNotLeftInTheWall` only ever passed while Valkyrien Skies had the boat frozen: unfrozen, it settled onto the wall, became grounded, and latched.
 - **Walking off the end of plating drops you at once.** The plate's sideways BLEED reaches a full block past its footprint while the primary column reaches 0.05, and a bleed-only blend was sustained for up to 12 ticks — so stepping off the last plating block left you pulled to the wall for about a block of travel more ("they don't immediately fall off the plating"). That sustain exists for the quarter-round pocket at a cube EDGE, which no primary column covers, and there it is the NEIGHBOURING face's bleed — pointing about ninety degrees away — whose blend carries the body across. Off the end of a flat plated run there is no second face: the only bleed still reaching is the one just left, pointing exactly where it always did. So the sustain now requires a bleed that actually diverges, compared against the field that WAS holding the entity rather than the held face's normal (a plate blended with the dimension's own gravity does not point along the face normal, and would have failed a normal-based test everywhere). A face change already in flight still counts as an edge and keeps the hold.
 
-## Unreleased (2.0.0-dev) — 2026-09-16 (round 88: the field a rider carried off the ship, the boat left in the hull)
+## Unreleased (2.0.0-dev) — 2026-09-16 (the field a rider carried off the ship, the boat left in the hull)
 
 - **Dismounting no longer snaps you back into a field you already left.** Riding a vehicle out of a gravity field looked right — a passenger inherits its vehicle's gravity — but the moment you got off, the old field grabbed you for a few ticks before releasing. Field sources (core, plating, normalizer, Surface Cling) queue their effect onto EVERY entity in range, the rider included, and the queue is only drained by the non-vehicle path of `updateGravityStatus`: the passenger branch returns before it. So every tick of the ride inside the field appended one more unconsumed effect, and the FIRST tick after dismounting resolved the whole pile at once — a full-strength field target, `fieldGraceTicks` refreshed to 6, then the usual decay back to normal. The split second. The passenger branch now drops what the sources queued, the way the spectator, server-sync and ship-seat branches already did. Two lesser bugs went with it: the list grew without bound on a long ride (a boat parked in a field for an hour held 72000 effects), and `releaseFieldGraceNow`/`releaseCling` decline while a primary field is pending — which, from a stale queue, was forever.
 
@@ -257,12 +257,12 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   - **Triggered off the FRAME, not off the field state**, which is what makes it work while RIDING. A non-player entity computes no gravity of its own on the client (`shouldAcceptServerSync` returns at the top of `updateGravityStatus`), so `fieldGraceTicks` is a server-only number there — and a ridden boat's position is CLIENT-sent, so a server-only step is overwritten by the next `ServerboundMoveVehiclePacket`. The release is read instead as the rising edge of "the chase target is plain world up", which is synced, so both sides see it and both step. The step is idempotent (a clear box yields no offset), so they converge.
   - The escape direction is the last frame up that was materially off world-up, remembered per tick: a settled chase converges DECISIVELY, reaching plain up in the very tick the release is ordered, so the live up at that moment is already world up and names nothing to step along.
   - PREDICTIVE, so nothing that was not in trouble is moved: the test is the box the entity is ABOUT to have (vanilla's upright one at its current position), not the rotated body it still has. The previous-tick position travels with the step so it is neither read back as velocity nor drawn as a slide.
-  - **Players get it too, on their own client.** The same geometry puts the CAMERA in the wall: the eye sits on the frame's up from the feet, so when the frame comes upright about a feet point lying in the face's plane the eye lands exactly on that plane — inside the block — and whatever pushes the body back out afterwards shoves the player along the wall ("my head ends up in the wall and it pushes me backwards into the other field"). Stepping off the face before the frame turns keeps the eye outside it. Client-side ONLY: the client computes a player's gravity and their movement is client-authoritative through exactly this transition, so a server-side step would be a rubber-band. `isControlledByLocalInstance` is useless for deciding this — for a player it answers `isEffectiveAi`, false on the client and true on the server, the wrong way round.
+  - **Players get it too, on their own client.** The same geometry puts the CAMERA in the wall: the eye sits on the frame's up from the feet, so when the frame comes upright about a feet point lying in the face's plane the eye lands exactly on that plane — inside the block — and whatever pushes the body back out afterwards shoves the player along the wall (the head ends up in the wall and the player is pushed backwards into the other field). Stepping off the face before the frame turns keeps the eye outside it. Client-side ONLY: the client computes a player's gravity and their movement is client-authoritative through exactly this transition, so a server-side step would be a rubber-band. `isControlledByLocalInstance` is useless for deciding this — for a player it answers `isEffectiveAi`, false on the client and true on the server, the wrong way round.
   - Fired on the FIRST upright tick rather than after a debounce: a dropout in effect delivery cannot produce a false release here (the grace and the held-surface sustain both keep `targetGravityVector` on the field vector across a gap, so the chase target does not go home while a field still holds the body), and every waited tick is one the player's eye spends rendered inside the block.
-- **A ridden vehicle's gravity chain is logged from both sides** (`[GravityUnbound] ridden[C|S]`, once a second). Mounting hands a boat's movement from the server to the rider's client, and the client computes no gravity of its own for a non-player entity (`shouldAcceptServerSync` returns at the top of `updateGravityStatus`, so `fieldGraceTicks` is 0 and `lastGroundNormal` null there, with only the synced frame to go on) — the two sides run the same body on different state, and a "the moment I drove it, it sank into the ground and lost its rotation" report cannot be read off either side alone. Each side now prints who owns the movement, its frame and what the frame is chasing, the field state behind it, the ground verdict, and whether the body would be inside blocks if it stood upright right now.
+- **A ridden vehicle's gravity chain is logged from both sides** (`[GravityUnbound] ridden[C|S]`, once a second). Mounting hands a boat's movement from the server to the rider's client, and the client computes no gravity of its own for a non-player entity (`shouldAcceptServerSync` returns at the top of `updateGravityStatus`, so `fieldGraceTicks` is 0 and `lastGroundNormal` null there, with only the synced frame to go on) — the two sides run the same body on different state, and a report that a boat sank into the ground and lost its rotation the moment it was driven cannot be read off either side alone. Each side now prints who owns the movement, its frame and what the frame is chasing, the field state behind it, the ground verdict, and whether the body would be inside blocks if it stood upright right now.
 - **A game test covers it** (`boatLeavingWallFieldIsNotLeftInTheWall`): plating on a wall, a boat resting on the plated face, the field taken away, and the boat's UPRIGHT box asserted clear of the blocks afterwards. Two things had to be worked around to make it mean anything. Valkyrien Skies cancels every `move()` in the game-test world (the same freeze `debugShipFreeze` reports, which is also why `chickenStandsOnSideFace` still fails there), so the boat is parked on the face by hand while the field turns its frame — the release and the clearance run entirely in the capability tick and are unaffected. And the assertion builds the upright box from the entity's DIMENSIONS rather than reading its stored one: the stored box is only refreshed when something moves the entity, so a resting one still carries the rotated envelope, which is narrower across the face and hides the very overlap being asked about.
 
-## Unreleased (2.0.0-dev) — 2026-09-12 (round 87: the physgun's frame, the drifting throw, the glide's face, what the chicken does on a cube)
+## Unreleased (2.0.0-dev) — 2026-09-12 (the physgun's frame, the drifting throw, the glide's face, what the chicken does on a cube)
 
 - **A physgun-held ship turns with its holder under rotated gravity.**
   VMod rebuilds the holder's rotation every server tick from the
@@ -342,9 +342,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   layered as specified, and a `minimumFallDistance` knob expresses the
   vertical threshold in blocks. See FullStop's own changelog.
 
-## Unreleased (2.0.0-dev) — 2026-09-05 (round 86: the retest — glide start, the cast, the boat's frame, stairs on ships, the diagonal step, letting go of the wall)
+## Unreleased (2.0.0-dev) — 2026-09-05 (the retest — glide start, the cast, the boat's frame, stairs on ships, the diagonal step, letting go of the wall)
 
-- **Elytra flight starts inside a ship's field.** Round 85 stopped the
+- **Elytra flight starts inside a ship's field.** An earlier fix (2026-09-05) stopped the
   server from ENDING a glide on its own replay's ground contact, but the
   START command has a ground check of its own: `tryToStartFallFlying`
   refuses when the server thinks the player is on the ground, and a refusal
@@ -354,8 +354,8 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   very moment the client pressed jump — every attempt cancelled on the
   spot. The start check now defers to the client's move packets exactly
   like the two end checks (shared `clientSaysAirborne`).
-- **Casting a rod from inside a core's field flies where you aim.** Round
-  85 made the bobber world-frame in `move()` and fixed its spawn point, but
+- **Casting a rod from inside a core's field flies where you aim.** The
+  2026-09-05 fix made the bobber world-frame in `move()` and fixed its spawn point, but
   its initial fling stayed vanilla's: built from the player's yaw and pitch,
   which live in the AIM frame, and now used raw as a world velocity — so
   the cast went along the player's local "forward" read as world axes,
@@ -384,7 +384,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   every stair on a rotated ship faced the wrong way. A ship-placement
   window (`PlacementFrame.inShipPlacement`, opened by `BlockItemMixin`
   around the same call VS wraps) passes the raw angles through untouched.
-  The round-85 half decision is now judged in the block grid too: the
+  The earlier half decision is now judged in the block grid too: the
   player's up and the (world-space) click location are re-expressed in the
   ship's grid before the vanilla rule runs.
 - **Stepping onto a slab while strafing along a wall.** The step assist only
@@ -420,7 +420,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   sticky rail) against an empty 20³ template; each logs its subject every
   20 ticks under `[GravityUnbound/test]`.
 
-## Unreleased (2.0.0-dev) — 2026-09-05 (round 85: the bobber, the stutter, the slime, the boots, the boat, the corner rail)
+## Unreleased (2.0.0-dev) — 2026-09-05 (the bobber, the stutter, the slime, the boots, the boat, the corner rail)
 
 - **Projectiles are world-frame in `move()` too — the fishing bobber no
   longer "bounces off" a core's field.** Arrows and throwables integrate
@@ -527,7 +527,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   players while the report is fresh — the same frame the velocity packets
   and FullStop's impact measurement then use.
 
-## Unreleased (2.0.0-dev) — 2026-09-05 (round 84: FullStop compatibility — impacts in the field's frame)
+## Unreleased (2.0.0-dev) — 2026-09-05 (FullStop compatibility — impacts in the field's frame)
 
 - **FullStop's kinetic damage now works inside gravity fields.** Being
   pulled by a core or a plate and slamming into a wall dealt nothing.
@@ -558,7 +558,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   way. New `movementToWorld`/`worldToMovement` helpers expose the
   convention; the two velocity methods route through them.
 
-## Unreleased (2.0.0-dev) — 2026-09-04 (round 83: lakes, orbit liquids, what a field touches, ships in the field)
+## Unreleased (2.0.0-dev) — 2026-09-04 (lakes, orbit liquids, what a field touches, ships in the field)
 
 - **Still water now answers a field.** A lake never noticed a field
   brought next to it because settled fluid has no scheduled ticks — the
@@ -747,7 +747,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   entity's actual scaled height, so the spheres match the doll at every
   scale.
 
-## Unreleased (2.0.0-dev) — 2026-09-04 (round 82: the world-cube rejection, particles in the field's frame, scaled limbs, the doll's scale)
+## Unreleased (2.0.0-dev) — 2026-09-04 (the world-cube rejection, particles in the field's frame, scaled limbs, the doll's scale)
 
 - **Plated cubes in the WORLD work again — the server was rejecting the
   client.** Not collision at all: the server replays every client move
@@ -803,10 +803,10 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   its mini-scale players full size in GUIs) while the entity's dimensions
   are scaled; GUI-mode hitbox geometry is brought back to the doll's size.
 
-## Unreleased (2.0.0-dev) — 2026-09-04 (round 81: round-80 follow-up — the real stutter, the box-to-capsule edge, cling holds, drops, the doll)
+## Unreleased (2.0.0-dev) — 2026-09-04 (follow-up — the real stutter, the box-to-capsule edge, cling holds, drops, the doll)
 
 - **The snap stutter's real sources, and the render smoothing is gone.**
-  Round 80's render-side easing only slowed the snap; the tick-rate
+  The 2026-09-04 render-side easing only slowed the snap; the tick-rate
   stepping it was meant to hide came from elsewhere. (1) The render
   pass re-aligned the drawn up toward the exact radial direction of a
   ship-mounted core, blended in and out by a weight that advanced once
@@ -829,7 +829,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   visible speed-up at the end of a chase ("animates, then snaps"); it
   now ramps in over eight ticks.
 - **Walking off the top face of a plated cube in the world no longer
-  breaks collision.** Round 80 rotated the walking momentum around the
+  breaks collision.** The 2026-09-04 build rotated the walking momentum around the
   edge in the identity frame too — correct, but the cardinal only
   snapped at the start of the NEXT tick, so the tick of the face change
   still ran vanilla BOX collision: the 0.6-wide box overlapping the top
@@ -851,7 +851,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 - **Drops on ships.** Two fixes. The item is now placed at the very end
   of `drop` (this mixin runs after Pehkui's), at 0.3 body-scaled below
   the eyes along the frame's down, whatever another mod moved it to in
-  between — round 80's pre-compensation for Pehkui's world-Y correction
+  between — the earlier pre-compensation for Pehkui's world-Y correction
   put the item a body height off whenever that correction did not run.
   And a fresh entity's instant frame snap now re-expresses its velocity
   (projectiles excepted): the spawn velocity had been written through
@@ -861,7 +861,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 - **The inventory paper doll shows its capsule spheres again**, stacked
   along the doll's own up.
 
-## Unreleased (2.0.0-dev) — 2026-09-04 (round 80: twelve-finding pass — snaps, seats, edges, scale, particles, wall jump)
+## Unreleased (2.0.0-dev) — 2026-09-04 (twelve-finding pass — snaps, seats, edges, scale, particles, wall jump)
 
 - **Surface snaps no longer look like a dropped frame rate — two causes.**
   (1) The level renderer only re-tests chunk visibility against the
@@ -1000,7 +1000,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-09-02 (round 78: cling lets go, the crosshair, the crawl flicker, the body, particles)
+## Unreleased (2.0.0-dev) — 2026-09-02 (cling lets go, the crosshair, the crawl flicker, the body, particles)
 
 - **Surface Cling no longer pulls in zero-g and lets go on a jump.** The
   boots used to seed a pull toward "whatever down currently is" before any
@@ -1044,7 +1044,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-09-02 (round 77: hands, bodies, doorways and Surface Cling)
+## Unreleased (2.0.0-dev) — 2026-09-02 (hands, bodies, doorways and Surface Cling)
 
 - **The first-person hand no longer sways or snaps on a rotating ship.**
   Vanilla sways the hand by the gap between the view yaw and a smoothed
@@ -1093,7 +1093,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-09-02 (round 76: ship attachment — one mechanism for riding a rotating ship)
+## Unreleased (2.0.0-dev) — 2026-09-02 (ship attachment — one mechanism for riding a rotating ship)
 
 - **The axis-dependent stutter on rotating ships had a structural cause:
   the ship's rotation reached the rider through two different paths.** The
@@ -1113,7 +1113,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   render-ride rewrites the interpolation base so the camera lands on the
   DRAWN ship pose. So every ship transform read during the player tick is
   the pose the rider was placed on at the end of the previous tick.
-  Round 75's "pin the idle anchor to the prev-tick transform" was built on
+  The 2026-08-22 "pin the idle anchor to the prev-tick transform" was built on
   the opposite ordering and left the standing player permanently one tick
   of ship motion behind the deck (the "standing still stutters, walking
   doesn't" report on wall faces). The anchor pins to the current transform
@@ -1141,7 +1141,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   is re-registered with VS's dragging every tick (its own ground-stand
   hand-off paths are untouched), so creative flight inside a spinning
   ship's plating or normalizer field rides the ship exactly.
-- **Walking off plating releases again.** Round 47's held-surface field
+- **Walking off plating releases again.** The 2026-08-19 held-surface field
   sustain is a self-sustaining loop (probe -> sustain -> gravity active ->
   probe) and on a continuous floor the probe never misses, so stepping from
   the plated part of a deck onto its unplated part stayed snapped forever.
@@ -1154,10 +1154,10 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 75: one pull per field, one carry per tick)
+## Unreleased (2.0.0-dev) — 2026-08-22 (one pull per field, one carry per tick)
 
-- **The Great Unknown "plating slams me down at scale 1" was a
-  TRIPLE-application of the pull.** Since rounds 68/70 the capability's
+- **The Great Unknown plating slamming the player down at scale 1 was a
+  TRIPLE-application of the pull.** Since the 2026-08-22 changes the capability's
   applyFieldPullDeficit supplies a living entity's FULL intended pull
   (BASE x strength) every field tick — but the plating's older
   artificial-gravity force (zero-g dimensions) was still applied on
@@ -1185,8 +1185,8 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   deck's identity frame skips the anchor; on the ceiling the residual
   is a twist about the VERTICAL eye arm — invisible), but on N/E/S/W
   faces the horizontal 1.62-block eye arm and the hull radius
-  amplified it into the "major stuttering the moment I step onto a
-  wall face" report. While VS is actively dragging, the anchor now
+  amplified it into the reported "major stuttering" on stepping onto a
+  wall face. While VS is actively dragging, the anchor now
   pins to the PREV-tick pose so the dragger's own carry lands the
   player exactly on the anchor — in steady state the anchor's setPos
   is a no-op, VS owns the whole carry, and its render-ride math is
@@ -1194,19 +1194,19 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 74: switch-easing, not caps — the smoothness architecture settles)
+## Unreleased (2.0.0-dev) — 2026-08-22 (switch-easing, not caps — the smoothness architecture settles)
 
-- **Jumping STILL unsnapped after round 73 because the render branch
+- **Jumping STILL unsnapped after the sawtooth fix because the render branch
   gated on the wrong ship reference**: capsuleGroundShip clears on the
   first airborne frame, so the drawn-ship alignment flipped
   surface->radial the instant a hop left the deck, bypassing the
   held-normal grace entirely. The held surface's shipyard image (and
   its ship) now survives through the grace via lastGroundShip — a hop
   keeps the surface branch for its whole arc.
-- **The round-72 blanket 10-degree/frame arc cap is removed — it WAS
+- **The blanket 10-degree/frame arc cap of 2026-08-22 is removed — it WAS
   the fly-mode stutter.** Capping every correction throttled the
   radial branch's legitimate full-strength per-frame tracking while
-  flying fast or close around a core (exactly the smoothness round 52
+  flying fast or close around a core (exactly the smoothness the radial anchor
   built). Replaced by BRANCH-SWITCH EASING: the capability tracks
   which alignment branch the render pass takes; on any switch
   (landing: radial->surface; hold expiry: surface->radial) the
@@ -1218,7 +1218,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 73: the sawtooth found — and jumps keep their snap)
+## Unreleased (2.0.0-dev) — 2026-08-22 (the sawtooth found — and jumps keep their snap)
 
 - **The spinning-ship jitter had an exact cause: the sub-tick camera
   twist DOUBLE-COUNTED.** Vanilla's yRotO lerp already interpolates the
@@ -1229,7 +1229,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   fraction of the tick's applied twist and contributes only the
   REMAINDER (the render transform's true lead): constant during steady
   spin, zero on stationary ships. This is also, in hindsight, what the
-  round-69 "low refresh rate" complaint likely was en route to.
+  earlier "low refresh rate" report likely was en route to.
 - **Jumping no longer unsnaps.** A 10-tick hold grace already existed —
   but the cliff early-release (moving against the held normal at
   0.08/tick) fired on every ordinary jump's DESCENT, and a full jump
@@ -1238,13 +1238,13 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   underneath means it is a JUMP — keep the hold; nothing underneath
   means a real cliff — release fast so the field can catch the fall.
   Grace raised to 16 ticks so the whole arc stays held: hopping around
-  on plating never unsnaps, exactly the requested cooldown behavior.
+  on plating never unsnaps, exactly the intended cooldown behavior.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 72: smooth landings and exact yaw-follow)
+## Unreleased (2.0.0-dev) — 2026-08-22 (smooth landings and exact yaw-follow)
 
-- **Landing snap eased.** Round 71's branch fix meant landing swaps the
+- **Landing snap eased.** The split-frame branch fix meant landing swaps the
   render alignment's target from radial to the held surface — and the
   correction arc applied the whole radial-vs-face angle in one frame
   (the "abrupt snap"). Large arcs are now rate-capped at 10 degrees
@@ -1261,7 +1261,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   the full tick rotation delta and applies it to yaw/head/body every
   tick (VS's dragger yaw suppressed at the source — nothing
   double-turns); the tick-vs-drawn-pose gap that made this stutter in
-  the round-69 attempt is closed by a SUB-TICK CAMERA TWIST — the view
+  the earlier attempt is closed by a SUB-TICK CAMERA TWIST — the view
   rotates by the twist of renderTransform o tickTransform^-1 each
   frame. Purely visual, identity on stationary ships. These two pieces
   were designed together in the reverted overhaul but never
@@ -1269,10 +1269,10 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 71: the split-frame snap — held surface wins the render pass)
+## Unreleased (2.0.0-dev) — 2026-08-22 (the split-frame snap — held surface wins the render pass)
 
 - **"Only the AABB snaps to the surface; the capsule spheres and
-  camera don't" — a render-pass branch-order bug from round 52,
+  camera don't" — a render-pass branch-order bug from the radial anchor (2026-08-21),
   exposed by F3+B on ship cores.** The drawn-ship alignment preferred
   the RADIAL field anchor over the held surface unconditionally: the
   tick-side frame and the physics box correctly snapped to the
@@ -1283,11 +1283,11 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   them. The held surface (grounded, shipyard-space normal) now wins
   the render alignment; the radial anchor applies exactly when no
   surface is held (circling, falling, flying in the field), which is
-  the case round 52 built it for.
+  the case the radial anchor was built for.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 70: fields own no-gravity entities — heartbeat-diagnosed)
+## Unreleased (2.0.0-dev) — 2026-08-22 (fields own no-gravity entities — heartbeat-diagnosed)
 
 - **The core-field "no pull in the Great Unknown" is solved, and the
   heartbeat named it in one capture.** The log showed the core's
@@ -1308,7 +1308,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 69: body-scaled probes and thresholds; pull heartbeat)
+## Unreleased (2.0.0-dev) — 2026-08-22 (body-scaled probes and thresholds; pull heartbeat)
 
 - **Surface snapping works on scaled ships now — the probe geometry
   scales with the body.** Every surface-probe offset was authored for
@@ -1333,7 +1333,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 68: fields overpower zero-gravity dimensions)
+## Unreleased (2.0.0-dev) — 2026-08-22 (fields overpower zero-gravity dimensions)
 
 - **Field pull is authoritative now.** Field strength reached vanilla
   travel as a MULTIPLIER on Forge's entity-gravity attribute — correct
@@ -1351,11 +1351,11 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   swimmers, and slow-falling (an intentionally reduced attribute is
   not suppression). Known limit: non-living entities (items, carts) in
   zero-g fields still follow their own hardcoded gravity paths and may
-  stay floaty there — separate follow-up if wanted.
+  stay floaty there — a separate follow-up.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 67: field range respects ship scale)
+## Unreleased (2.0.0-dev) — 2026-08-22 (field range respects ship scale)
 
 - **A gravity core's field now scales with its ship.** The range is
   authored in the core's OWN block grid, but the core computed
@@ -1374,11 +1374,11 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 66: scaled-ship collision, re-applied)
+## Unreleased (2.0.0-dev) — 2026-08-22 (scaled-ship collision, re-applied)
 
-- Rounds 66-73 were fully reverted after a bad
+- The 2026-08-22 ship-frame work was fully reverted after a bad
   interaction (the ship-frame follow / fly-smoothing / steering-engine
-  arc — to be revisited deliberately). This round RE-APPLIES only the
+  arc — to be revisited deliberately). This entry RE-APPLIES only the
   verified scaled-ship collision work that was lost with them:
 - **Scaled ships are solid (VS Genesis / Pehkui-scaled ships).** Three
   stacked fixes in CapsuleCollider: (1) the obstacle gatherer CLAMPS an
@@ -1400,12 +1400,12 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 65: the upstream dossier)
+## Unreleased (2.0.0-dev) — 2026-08-22 (the upstream dossier)
 
 - **New docs/UpstreamIssueReports.md** — bugs whose root cause lives in
   OTHER mods, with the evidence gathered here and ready-to-paste issue
   drafts. First entry: the Valkyrien Skies entity-section corruption
-  (the round-62 crash and the 02:46 disconnect share one fingerprint:
+  (the torn-section crash and a later disconnect share one fingerprint:
   a player section transfer executing off the server thread tears the
   section's ClassInstanceMultiMap; VS's afterHandleMovePlayer setPos is
   in every failing stack, reproduces without lag while riding a moving
@@ -1415,7 +1415,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-22 (round 64: the lag hunt, part 2 — profiled)
+## Unreleased (2.0.0-dev) — 2026-08-22 (the lag hunt, part 2 — profiled)
 
 - **The real profiler capture landed the attribution.** Over a 487 s
   sample (healthy session, ~120 s of actual tick work): ~40 s — a third
@@ -1430,7 +1430,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 - **Fix — chunk-bucket spatial index.** The per-level source registry
   now buckets sources by chunk (bucket key ignores Y); a query scans
   only the buckets within the level's largest source range instead of
-  the whole registry. The round-63 per-tick memo stays on top. The
+  the whole registry. The per-tick memo of 2026-08-21 stays on top. The
   monotonic max-range ring means a removed large source leaves only
   null bucket lookups behind. Tie-breaking is unchanged (priority,
   then distance, then the DOWN > X > Z > UP direction rank), so field
@@ -1444,7 +1444,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 63: the lag hunt, part 1)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the lag hunt, part 1)
 
 - **The shared spark link was a HEALTH report, not a profiler capture**
   (no stack samples). Its tick stats still narrow things: median tick
@@ -1456,7 +1456,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   MC-like conditions where a limit cycle could hide from the
   synchronous rounds): a 720-source planet with punched pockets
   settles in 737 cell-ticks, perturbation cycles in ~24, the
-  diagonal-source combine in 30. The round 57/58 rules do not
+  diagonal-source combine in 30. The combine and solid-planet rules do not
   self-sustain.
 - **Optimization — per-tick field-query memo.** Every fluid tick makes
   ~20-40 fluidDownAt queries and each one iterated ALL registered
@@ -1469,7 +1469,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 62: the torn-section crash)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the torn-section crash)
 
 - **Crash triage (NoSuchElementException in the plating tick): not our
   bug, but now our problem to survive.** Full chain from the logs of
@@ -1494,7 +1494,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 61: rails fold around corners)
+## Unreleased (2.0.0-dev) — 2026-08-21 (rails fold around corners)
 
 - **Vanilla-rail isolation (the misalignment root).** A rotated sticky
   rail is a BaseRailBlock in the rails tag (so minecart placement
@@ -1502,7 +1502,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   WALL rail as an ordinary flat rail: vanilla RailState curved real
   rails toward wall-rail cells and wrote world-frame shapes into
   local-frame SHAPE properties (the kinked ground rails and ceiling
-  S-bends in the screenshots), and a corrupted shape fed the cart ride
+  S-bends seen in game), and a corrupted shape fed the cart ride
   garbage track chords — the cart clamped diagonally, misaligned and
   sunk into the ground. New BaseRailBlockMixin: {@code isRail} returns
   FALSE for non-DOWN sticky rails, so vanilla rail logic and vanilla
@@ -1538,10 +1538,10 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 60: the flush planet skin)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the flush planet skin)
 
 - **Core-field water now renders as a taut FLUSH skin — the perfect
-  cube.** Round 59's body-contact reads connected the bare-core shell,
+  cube.** The perpendicular body-contact reads connected the bare-core shell,
   but it still looked wrong, and no honest-level rendering ever could:
   every shell cell is an outermost "surface" cell (frame-up is air), so
   each drew an inset, sloped panel at its own level (5-7) along its own
@@ -1561,7 +1561,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 59: perpendicular body contact)
+## Unreleased (2.0.0-dev) — 2026-08-21 (perpendicular body contact)
 
 - **The bare-core shell now renders as one connected blob.** The
   physics was already right — fluidsim shows a perfectly symmetric
@@ -1570,7 +1570,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   read all its cross-frame water neighbors as EMPTY (none are falling
   columns, so none of the pour/drain/full-column reads fired). Each
   cell sloped to nothing at every sector boundary: the vest-shaped
-  taper and claw fins in the screenshots.
+  taper and claw fins seen in game.
 - **Fix — the missing read is geometric, not a special case**: a
   cross-frame same-type neighbor on a PERPENDICULAR down axis keeps
   its partial height on a DIFFERENT axis, so along the querying cell's
@@ -1579,9 +1579,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   1): chunky shell cells knit their surfaces together into a rounded
   cube, while a thin film on a wrapped solid cube ramps DOWN toward
   its low level — vanilla's pour-over droop at the lip, NOT the
-  round-30 full-height bulge. The axis-equal opposite frame (the
+  old full-height bulge. The axis-equal opposite frame (the
   mutual pit) keeps its cliff. Rendering-only; the flow rules and the
-  sim are untouched this round.
+  sim are untouched here.
 - Expectation note: a single source yields shell levels 5-7, so the
   cube renders with vanilla-honest tapers at its outer edges. More
   sources (or letting in-field conversion knit a fed shell into
@@ -1589,22 +1589,21 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 58: the solid planet — screenshots round)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the solid planet)
 
 - **The "air pockets" shattering a solid water planet were mostly NOT
   air** — they were phantom internal water surfaces: the renderer's
   cross-frame culling isolation treated the other sector's water as
   empty, so every sector boundary deep inside the flooded cube rendered
-  internal faces, in the uniform core-surrounding pattern the
-  screenshots show. FIX: a neighbor that renders as a FULL COLUMN in
+  internal faces, in a uniform core-surrounding pattern. FIX: a neighbor that renders as a FULL COLUMN in
   its own frame fills its entire cell, so it genuinely covers the
   shared face whatever its frame — such neighbors now pass through the
   culling mask (and read full in height shaping). Deep inside a water
   planet every cell is a full column, so internal sector boundaries
   stop rendering entirely; near the real surface, partial cells keep
   the isolation.
-- **fluidsim caught a round-57 physics regression the screenshots also
-  show (the jagged single-source blob)**: deferring over ALL cross-frame
+- **fluidsim caught a physics regression from the combine change, also seen
+  in game (the jagged single-source blob)**: deferring over ALL cross-frame
   water killed the corner wrap's continuation — the wrap cell sits over
   the previous face's water film and must keep spreading onto the next
   face; with it deferred, coverage died past the first face (cube faces
@@ -1613,9 +1612,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   flooded interior: COMBINE, no sheet) from a SOLID-BACKED surface film
   (the wrap continuation: keep spreading) — the same solid-backing
   criterion the side-entry feed already uses. Full suite green,
-  including the round-57 no-sheet scenario.
+  including the combine no-sheet scenario.
 - **fluidsim brought up to date and extended** (it had drifted to
-  round-52 rules): round-57 combine gate and in-field source conversion
+  the radial-anchor-era rules): the combine gate and in-field source conversion
   ported in; new regression scenarios for the diagonal-source sheet
   (bounded) and the punched water planet (all pockets fill AND convert
   to sources); the drain invariant now strips CONVERTED sources too, so
@@ -1623,7 +1622,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 57: water planets combine)
+## Unreleased (2.0.0-dev) — 2026-08-21 (water planets combine)
 
 - **Streams now COMBINE with cross-frame water instead of sheeting over
   it.** The spread hole-gate deliberately let non-falling water over a
@@ -1652,10 +1651,10 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 56: the drain funnel)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the drain funnel)
 
-- **The logged plate's own surface now slopes into its outflow.** Round
-  54 made the column BELOW a fluid-logged plate render full (the
+- **The logged plate's own surface now slopes into its outflow.** The
+  through-fall seam fix made the column BELOW a fluid-logged plate render full (the
   through-fall seam), but the plate cell's sheet still shaped that
   column as empty — a thin sheet perched on a full-width column, a hard
   T-junction instead of a slope.
@@ -1671,12 +1670,12 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   presence at the drain is the proof the flow continues). The wrapped
   cube's side-by-side sector sheets still read empty: a sector
   neighbor's down points AT the rim, not away from it, so the drain
-  test cannot fire there — cliff edges and the round-30/53 no-bulge
+  test cannot fire there — cliff edges and the earlier no-bulge
   behavior are preserved.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 55: lava-logging)
+## Unreleased (2.0.0-dev) — 2026-08-21 (lava-logging)
 
 - **Gravity plating can now hold LAVA** the same way it holds water —
   source or flowing, full level range, following the plate's gravity.
@@ -1700,9 +1699,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 54: the through-fall seam)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the through-fall seam)
 
-- **Water dropping out the back of a field connects too.** Round 53's
+- **Water dropping out the back of a field connects too.** The pour-aware ramp's
   pour test covers water arriving BY THE NEIGHBOR'S gravity (its
   frame-down points at the cell) — but a seam has a second form: water
   leaving a field by THE RECEIVING CELL'S gravity. Below a waterlogged
@@ -1721,15 +1720,15 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   neighbors agree about shared corners. An axis-equal opposite frame at
   the frame-up (the mutual-pit seam, where neither side feeds the
   other) keeps its cliff edge, and lateral/diagonal shaping is
-  untouched — the cliff-edge/no-bulge behavior of rounds 30 and 53 is
+  untouched — the earlier cliff-edge/no-bulge behavior is
   preserved on wrapped cubes.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 53: the pour-aware ramp)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the pour-aware ramp)
 
 - **Water crossing a gravity boundary connects with a slope again**
-  (round 30 regression). Round 30 flipped the renderer's cross-frame
+  (regression from 2026-08-17). That change flipped the renderer's cross-frame
   height shaping from "full column" to cliff-edge to kill the bulging
   edges on wrapped cubes — but that also severed the visual connection
   where a falling stream actually crosses into a differently-oriented
@@ -1744,17 +1743,17 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   entering AND exiting fields. All other cross-frame water (the
   side-by-side sector sheets of a wrapped cube, thin edge cells whose
   down merely points at the next face) still shapes as empty — the
-  round-30 cliff-edge fix is preserved. This is the renderer's mirror of
+  2026-08-17 cliff-edge fix is preserved. This is the renderer's mirror of
   the flow engine's crossFeeds relation and getFlow's pour-aware
   isolation: the visual ramp exists precisely where water actually moves
   between frames. Physics untouched — flow behavior is unchanged.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-21 (round 52: the radial anchor)
+## Unreleased (2.0.0-dev) — 2026-08-21 (the radial anchor)
 
-- **Fixed the circling jitter around ship-mounted gravity cores** (round
-  51 regression). The field-ship anchor assumed a ship field's direction
+- **Fixed the circling jitter around ship-mounted gravity cores** (field-ship
+  anchor regression). The field-ship anchor assumed a ship field's direction
   is a block-grid constant — true for plates and normalizers, false for
   a core: its pull is RADIAL, recomputed from the entity's position
   every tick. The core was sampling that direction into shipyard space
@@ -1775,7 +1774,7 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 51: the field-ship anchor)
+## Unreleased (2.0.0-dev) — 2026-08-19 (the field-ship anchor)
 
 - **Alignment now belongs to the FIELD, not to ground contact.** A
   ship-mounted field's direction is a block-grid constant in the ship's
@@ -1796,9 +1795,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 50: the single-arg straggler)
+## Unreleased (2.0.0-dev) — 2026-08-19 (the single-arg straggler)
 
-- Round 49's drawn-ship alignment confirmed working in-game: the player
+- The drawn-ship alignment confirmed working in-game: the player
   model rides the moving ship perfectly. The two leftovers — the camera
   trailing the model (visible in F5) and the F3+B capsule debug spheres
   not rotating with it — shared one root: both used the one-argument
@@ -1809,9 +1808,9 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 49: the drawn-ship alignment — measured fix)
+## Unreleased (2.0.0-dev) — 2026-08-19 (the drawn-ship alignment — measured fix)
 
-- **The vs-drag diagnostics delivered the verdict**: capsule players are
+- **The vs-drag diagnostics showed** that capsule players are
   FULLY inside VS's pipeline (draggable, actively dragged, both sides),
   and VS's render-ride measurably carries the local player's POSITION
   onto the drawn ship every frame (~0.4 blocks at the test spin rate).
@@ -1825,13 +1824,13 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
   frame is parallel-transported onto that normal as the ship is DRAWN
   (render transform). Identity when the drawn pose matches the tick pose
   (stationary ships) and inactive off-ship or on level decks; the render
-  slerp is also hemisphere-aligned. This is the round-38 idea returned
+  slerp is also hemisphere-aligned. This is the ship-sync experiment's idea returned
   with its true justification — it originally drowned under the
   since-fixed target flips and server field starvation.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 48: the two-pipelines synthesis)
+## Unreleased (2.0.0-dev) — 2026-08-19 (the two-pipelines synthesis)
 
 - The observation that DOWN-gravity plating on a ship looks fine
   while any tilted gravity misaligns identified the architecture-level
@@ -1850,15 +1849,15 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 47: the starving server — measured root cause of the ship saga)
+## Unreleased (2.0.0-dev) — 2026-08-19 (the starving server — measured root cause)
 
 - **The chain diagnostics found it**: on a fast-rotating ship the SERVER
   receives zero field effects for seconds at a time (the server-side
   player position lags the client by packets, mapping outside the swept
   field column in ship space), the grace expires, and the server's
   gravity collapses to vanilla world-down MID-RIDE — the cause of the
-  jump fling, the periodic camera snap-arounds, and the upright-player
-  screenshots. The frozen grace vector also drifted ~40° stale during
+  jump fling, the periodic camera snap-arounds, and the upright player
+  seen on decks. The frozen grace vector also drifted ~40° stale during
   dropouts.
 - **Fix — standing on a held surface sustains its field**: while the
   under-feet probe says the player stands on the surface the field
@@ -1870,13 +1869,13 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 46: chain diagnostics)
+## Unreleased (2.0.0-dev) — 2026-08-19 (chain diagnostics)
 
-- Round 45's surface glue did not resolve the tilt (new screenshot:
-  still near-world-upright on a ~30° deck). Two theories eliminated by
+- The surface glue did not resolve the tilt (still near-world-upright
+  on a ~30° deck). Two theories eliminated by
   code reading: field containment is already ship-space-correct, and a
   static ~30° error cannot be chase lag. Also discovered the committed
-  baseline still contains the round-35 swing feed-forward (the only
+  baseline still contains the ship-sync experiment's swing feed-forward (the only
   ship-experiment piece the commits captured).
 - New CHAIN HEARTBEAT (both client [C] and server [S], every 2 seconds
   when gravity-relevant): effects-received count, grace, held surface
@@ -1886,13 +1885,13 @@ A video: an Automobility car on gravity plating on a ship spinning and moving in
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (round 45: surface glue + grounded grace release)
+## Unreleased (2.0.0-dev) — 2026-08-19 (surface glue + grounded grace release)
 
 First post-revert round: two small, self-limiting changes, one file.
 
 - **Surface glue (the constant tilt on rotating ships)**: the frame chase
   tracked at 8-35% gain, whose steady-state lag on a continuously
-  rotating target was the ~25-30° player tilt in the screenshot.
+  rotating target was the reported ~25-30° player tilt.
   While standing on a held surface AND the target actually points along
   that surface's normal, the chase now tracks at 0.9 gain — glued to the
   deck. Self-limiting by construction: if the target flickers away from
@@ -1905,19 +1904,19 @@ First post-revert round: two small, self-limiting changes, one file.
   2 ticks instead of holding the stale pull for the full window — the
   "gravity takes a second to update" delay, on ships and in world space.
 - Explicitly deferred, one thing at a time: the render-level sub-tick
-  stutter (next round, as its own single mechanism inside VS's update
+  stutter (later, as its own single mechanism inside VS's update
   pipeline), and the small residual one-tick-staleness tilt.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-19 (rounds 35-43: ship-sync experiment — REVERTED)
+## Unreleased (2.0.0-dev) — 2026-08-19 (ship-sync experiment — REVERTED)
 
 Nine iterations attempted to perfect standing on moving/rotating VS ships
 (tick feed-forward, render locks, camera rides, late tick alignment,
 hemisphere alignment, anchors). Each fixed a real, measured defect — but
 their interactions made the in-game result WORSE than the baseline, and
 the whole uncommitted pile was reverted. What the instrumentation proved,
-kept for the next attempt (see the project memory for full details):
+kept for the next attempt:
 
 - VS updates client ship transforms AFTER entity ticks (all mid-tick
   reads are one tick stale) and updates render transforms at frame start.
@@ -1935,12 +1934,11 @@ The next attempt should be ONE mechanism, built inside VS's own update
 pipeline (its dragger/transform events), validated in-game at each step —
 not corrections layered around vanilla's tick/render loop.
 
-## Unreleased (2.0.0-dev) — 2026-08-18 (round 34: GUI overhaul restored)
+## Unreleased (2.0.0-dev) — 2026-08-18 (GUI overhaul restored)
 
-NOTE: most of rounds 29-33 were reverted in-tree (kept: namespace
+NOTE: most of the 2026-08-16/17 work below was reverted in-tree (kept: namespace
 rename, mimic sounds, capsule feel fixes, per-tick projectile sync).
 Entries below this note describe work that may no longer be present.
-New workflow: one issue per round.
 
 - **Settings GUI overhaul re-applied** (was reverted together with the
   unwanted changes): labeled sections — Field / Gravity / Ship & Visuals
@@ -1953,7 +1951,7 @@ New workflow: one issue per round.
   flood-fill cap raised 256 → 4096.
 
 
-## Unreleased (2.0.0-dev) — 2026-08-17 (round 30: sync cadence, cliff-edge water, ramps, TNT)
+## Unreleased (2.0.0-dev) — 2026-08-17 (sync cadence, cliff-edge water, ramps, TNT)
 
 - **Universal in-field smoothness (arrows/items/orbs/tridents)**: entities
   under an active gravity frame now sync position AND velocity every tick
@@ -1966,7 +1964,7 @@ New workflow: one issue per round.
   bandwidth.
 - **TNT (and falling blocks) now obey gravity**: PrimedTnt and
   FallingBlockEntity override tick() without calling super, so their
-  gravity capabilities NEVER ticked (same root as the round-28 minecart
+  gravity capabilities NEVER ticked (same root as the 2026-08-16 minecart
   find). Both mixins now drive the capability.
 - **Field blocks are explosion-immune**: core, plating, and normalizer
   get bedrock-class blast resistance.
@@ -2012,7 +2010,7 @@ New workflow: one issue per round.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-17 (round 29: feel, snap, rails v2, desync — 12-finding pass)
+## Unreleased (2.0.0-dev) — 2026-08-17 (feel, snap, rails v2, desync — 12-finding pass)
 
 - **Capsule feel on flat ground**: all anti-slide pins/brakes now engage
   ONLY on genuinely tilted ground (they exist to stop slope creep; on
@@ -2025,8 +2023,8 @@ New workflow: one issue per round.
   capsule still finds ground within step height below.
 - **Surface snap professionalized**:
   - snap-off is now truly snap-free for players — pure smooth radial
-    (the grounded-cardinal substitution from round 27 was the "still
-    snaps when I touch a face, unsnaps when I jump" behavior; mobs keep
+    (the grounded-cardinal substitution of 2026-08-16 was the snap on
+    touching a face and the unsnap on jumping; mobs keep
     it — they cannot manage radial drag);
   - RELATIVE endorsement gates: a candidate face must be field-endorsed
     at least half as strongly as the held one — stair risers and door
@@ -2079,7 +2077,7 @@ New workflow: one issue per round.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-16 (round 28: Gravity Unbound — rename, rails, refinement)
+## Unreleased (2.0.0-dev) — 2026-08-16 (Gravity Unbound — rename, rails, refinement)
 
 - **RENAMED: the mod is now "Gravity Unbound"** — mod id `gravityunbound`,
   package `net.camacraft.gravityunbound` (was GravityVS /
@@ -2121,7 +2119,7 @@ New workflow: one issue per round.
   onGround() is world-down based and stayed false on rotated faces,
   leaving standing entities under the radial center-pull).
 - **Water no longer freezes grounded players**: the pre-collision static
-  pin (a third pin, missed last round) stripped the current's small
+  pin (a third pin, missed before) stripped the current's small
   tangential movement every tick; it now yields in water/lava.
 - **Per-dimension gravity**: config `dimensionGravity` entries
   ("minecraft:the_nether=up,0.5") and a runtime API
@@ -2142,7 +2140,7 @@ New workflow: one issue per round.
 
 
 
-## Unreleased (2.0.0-dev) — 2026-08-16 (round 27: entities, projectiles, sticky system, polish)
+## Unreleased (2.0.0-dev) — 2026-08-16 (entities, projectiles, sticky system, polish)
 
 - **Capsule collider extended to ALL living entities** under active gravity
   frames (was players-only): mobs on rotated plating no longer catch on
@@ -2202,7 +2200,7 @@ New workflow: one issue per round.
 
 ## Unreleased (2.0.0-dev) — 2026-08-16 (the feed arithmetic: pour-through, corner wraps, boundary cut)
 
-- **Complete cross-frame feed arithmetic**, replacing the previous round's
+- **Complete cross-frame feed arithmetic**, replacing the previous entry's
   full-reset pours after simulator-driven diagnosis of three in-game
   reports (boundary splash "flowing across like a solid block", lingering
   undrainable branches, incomplete cube coverage). Every fluid transfer now
@@ -2230,7 +2228,7 @@ New workflow: one issue per round.
   - **Defer-to-column, frame-aware**: FALLING water over cross-frame field
     water defers exactly like vanilla — a world stream landing on a
     sideways field is absorbed and redirected, never splashing sideways
-    over the boundary (the round-23 unconditional gate caused exactly that
+    over the boundary (the earlier unconditional gate caused exactly that
     splash). Only LATERAL water over a cross-frame below cell side-spreads,
     which is the corner wrap continuing instead of dead-ending.
   - **Uniform in-field spreading**: vanilla's min-slope-distance channeling
@@ -2274,7 +2272,7 @@ New workflow: one issue per round.
     e.g. a plated cube's edge cells) by the same DOWN > X > Z > UP rank
     instead of map iteration order, so plated builds get the same proven
     sector layout.
-  - Simulator verdict (3×3×3 cube, one source top-center): stable in 11
+  - Simulator result (3×3×3 cube, one source top-center): stable in 11
     rounds, 98 cells, all six faces fully covered with levels fading from
     the source, ZERO cells beyond the surface shell, and complete drainage
     to zero on source removal. The simulator is committed at
@@ -2446,7 +2444,7 @@ New workflow: one issue per round.
   circulate around all faces; the bias is far too small to affect
   non-tied cells, and pole ties keep their downward preference.
 
-## Unreleased (2.0.0-dev) — 2026-08-16 (gravity fluids: test feedback round)
+## Unreleased (2.0.0-dev) — 2026-08-16 (gravity fluids: test feedback)
 
 - **Gravity plating is waterloggable.** Plates are thin panels sharing
   their cell with fluid; a water source no longer destroys them (placement
@@ -2857,8 +2855,8 @@ the first roadmap feature drop.
 
 ### Fixed
 
-- **Gravity no longer cuts out at cube edges ("sometimes I fall off the first
-  face before reaching the second").** The corner pocket just past a cube edge
+- **Gravity no longer cuts out at cube edges (a fall off the first face
+  before reaching the second).** The corner pocket just past a cube edge
   lies outside BOTH adjacent faces' primary field columns — it is covered only
   by their hidden sideways bleeds, and bleed-only regions count as "no field"
   (so that standing beside a plate on plain ground is unaffected). Crossing the
@@ -3119,7 +3117,7 @@ the first roadmap feature drop.
   Valkyrien Skies' collision wrapper clears its "standing on ship" state
   whenever the collision result differs from its own ship-adjusted movement —
   and the capsule legitimately changes the movement every grounded tick, so
-  the ship-standing info was wiped the moment we set it: the ship slid out
+  the ship-standing info was wiped the moment the capsule set it: the ship slid out
   from under a standing player, while hovering just above the plate (movement
   untouched, nothing wiped) still dragged correctly. The capsule now raises
   VS's own `ignoreNextGroundStand` escape hatch each ship-grounded tick, which
@@ -3167,7 +3165,7 @@ the first roadmap feature drop.
 
 ### Changed
 
-- **Flight feedforward / orbit assist reverted** (per feedback): the camera
+- **Flight feedforward / orbit assist reverted** (after testing): the camera
   chase is back to the plain proportional controller from before — the slight
   outward drift while circling a core in creative flight is accepted in
   exchange for zero glitchiness.
@@ -3189,9 +3187,9 @@ the first roadmap feature drop.
   surface (walking over a cube edge, floor→wall, wall→ceiling), the choice is
   locked for 8 ticks while the frame finishes rotating, and the held face is
   kept alive even when the ground probe briefly misses. This kills the
-  remaining oscillation by construction — the "camera snaps back and forth
-  between the two faces and I can never move forward" deadlock at plate-field
-  boundaries was the two faces alternately winning the probe while the
+  remaining oscillation by construction — the deadlock at plate-field
+  boundaries, where the camera snapped back and forth between the two faces
+  and the player could never move forward, was the two faces alternately winning the probe while the
   half-rotated frame scrambled the controls.
 
 - **Walking from floor plating onto wall plating no longer launches the player

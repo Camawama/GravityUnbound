@@ -29,7 +29,7 @@ throws, with two observed terminal outcomes:
 - `java.util.NoSuchElementException` inside `EntitySection.getEntities`
   during any full iteration (crashed the server inside a Gravity Unbound
   block-entity tick, which got the "Suspected Mod" blame; that iteration is
-  hardened on our side since round 62);
+  hardened on this mod's side since 2026-08-21);
 - `java.lang.ArrayIndexOutOfBoundsException: Index -1 out of bounds for
   length 10` inside `ClassInstanceMultiMap.add/remove` during move-packet
   handling — surfacing either as a "Failed to handle packet ... suppressing
@@ -125,8 +125,8 @@ disconnect with the preceding `vs-drag` context lines).
 
 ### Local mitigations already shipped (Gravity Unbound)
 
-- Round 62: field block entities' entity queries survive torn sections
+- 2026-08-21: field block entities' entity queries survive torn sections
   (`GCUtil.safeFieldEntityQuery` — degrade to the previous cache, warn,
   never crash the tick).
-- Rounds 63-64: fluid field-query cost reduced (~19x on the hot scan), which
+- 2026-08-21/22: fluid field-query cost reduced (~19x on the hot scan), which
   removes the mass-update lag spikes that catalyzed occurrence (a).

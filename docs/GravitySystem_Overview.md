@@ -188,8 +188,8 @@ What this enables and how it works:
   demanding case (tick-timing between VS's transform updates, the server's
   view of the player, and the renderer). Standing/walking is stable;
   residual visual stutter and fling edge-cases at high spin rates are an
-  active work area — see CHANGELOG rounds 35+ for the full engineering
-  history.
+  active work area — see the CHANGELOG entries from 2026-08-19 on for the full
+  engineering history.
 
 ## 7. Configuration highlights (`gravityunbound` server config)
 

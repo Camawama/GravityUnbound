@@ -100,7 +100,7 @@ increments. Any axis that no contact touches therefore comes back
 it `onGround`, fall damage, and jump physics — by comparing the requested and
 achieved movement with exact `!=` on doubles. Summing `movement/3` three times
 already differs in the last bit, which vanilla reads as a phantom collision
-(symptoms we fixed the hard way: jumps cancelling mid-air, flight stuttering,
+(the symptoms before this rule: jumps cancelling mid-air, flight stuttering,
 friction flickering).
 
 ### 3.3 Depenetration: push out along the contact normal

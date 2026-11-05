@@ -132,9 +132,9 @@ Every plating block entity, every tick, on both sides: `getShipManagingPos` look
 ## 3. Gravity resolution & intersecting fields
 
 - `resolveGravityDirection` (`GravityCapabilityImpl.java:290-338`) blends all effects within `BLEND_RANGE = 5.0` priority units of the max. Plating priority is `1000 - distanceToPlate`, so *all plates within 5 blocks of the nearest plate's distance* blend by distance. This produces the arbitrary-angle vectors that the rest of the code can't handle (§1), and near edges/corners the weights shift every tick → constant micro-changes (§1.3).
-- **Opposing fields cancel to garbage:** if accumulated gravity ≈ zero (`accumulatedGravity.lengthSqr() <= 0.0001`, line 329), the code silently *keeps the previous direction* — there is no zero-g state, no "rotate freely but keep control" behavior as you described wanting, and no hysteresis. With two exactly opposing fields the entity's gravity flips based on floating-point noise in which weight is larger; combined with §1.3 each flip resets fall distance, rotates velocity 180°, and restarts the animation → the classic "stuck vibrating between two fields" glitch.
+- **Opposing fields cancel to garbage:** if accumulated gravity ≈ zero (`accumulatedGravity.lengthSqr() <= 0.0001`, line 329), the code silently *keeps the previous direction* — there is no zero-g state, no "rotate freely but keep control" behavior as the roadmap wants, and no hysteresis. With two exactly opposing fields the entity's gravity flips based on floating-point noise in which weight is larger; combined with §1.3 each flip resets fall distance, rotates velocity 180°, and restarts the animation → the classic "stuck vibrating between two fields" glitch.
 - The `isOpposite` −10 priority penalty plus eye-position testing (`GravityPlatingBlockEntity.java:341-344, 379-381`) is the only anti-flip mechanism; it pushes opposite plates entirely out of blend range, so walking across the *inside* of a plated box (floor→ceiling transition) hard-snaps rather than blending.
-- There is no per-entity "current field" ownership, no dominant-field selection, no angular rate limit on how fast gravity may rotate. All of the intelligent-intersection behavior you want has no place to live in the current architecture.
+- There is no per-entity "current field" ownership, no dominant-field selection, no angular rate limit on how fast gravity may rotate. None of the intelligent-intersection behavior the roadmap wants has a place to live in the current architecture.
 
 ---
 
@@ -197,7 +197,7 @@ This is the most alarming code in the repo (`mixin/MixinServerLevel.java`, `util
 
 ---
 
-## 9. Feature gaps vs. your stated goals
+## 9. Feature gaps vs. the roadmap's goals
 
 | Goal | Current state |
 |---|---|
@@ -207,7 +207,7 @@ This is the most alarming code in the repo (`mixin/MixinServerLevel.java`, `util
 | Gravity core block (radial field, configurable range) | Does not exist; only plating. Nothing in the field system supports radial (point-source) direction — plate logic is face/box-based, and `resolveGravityDirection` has no concept of a field *shape* |
 | Smooth ground↔ship transitions | Direction is computed in world space so blending across the boundary is theoretically possible, but per-tick change events (§1.3), the skipped view remap (§1.4), client/server ship-transform divergence (§4.3), and the anti-slide velocity kill (§2.1) each break it in practice |
 
-Architecturally: gravity *sources* (plating, future core) push effects directly at entities they find via per-block-entity AABB scans. For cores, ship forces, and intersection logic you will eventually need the inverse — a per-level field registry that entities/ships query — otherwise every new source re-implements scanning, ship transforms, sync, and blending.
+Architecturally: gravity *sources* (plating, future core) push effects directly at entities they find via per-block-entity AABB scans. For cores, ship forces, and intersection logic the inverse is eventually needed — a per-level field registry that entities/ships query — otherwise every new source re-implements scanning, ship transforms, sync, and blending.
 
 ---
 
@@ -228,7 +228,7 @@ Architecturally: gravity *sources* (plating, future core) push effects directly 
 
 ## Priority summary
 
-If you fix things in order of impact on your goals:
+In order of impact on the roadmap's goals:
 
 1. **Frame stability (§1.1, §1.4):** a continuous, minimal-twist player frame carried tick-to-tick, used *everywhere* (one source of truth), with the cardinal fast-path quaternions made consistent with it.
 2. **Kill the per-tick change storm (§1.3, §4.1):** angular epsilon + rate-limited slerp of the gravity vector; separate "direction drifted slightly" from "gravity changed, run the big event."

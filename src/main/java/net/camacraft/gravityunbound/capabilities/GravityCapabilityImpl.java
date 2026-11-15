@@ -2619,8 +2619,12 @@ public class GravityCapabilityImpl implements IGravityCapability {
         // player's eyes along the look vector (VMod's physgun, mob
         // targeting) pointed the wrong way under a rotated frame. The report
         // already carries the client's own ship carry; adopted verbatim.
+        // Only where the server itself sees something that could turn this player (2.0.0.7): a turned frame is what
+        // makes the client's movement reports authoritative (isMovementClientAuthoritative), and a client that sent
+        // one in the plain world, with no field, ship, boots or space about it, walked through blocks anywhere.
         if (!entity.level().isClientSide() && entity instanceof Player
-            && clientReportedFrame != null && clientFrameAge < CLIENT_REPORT_TTL) {
+            && clientReportedFrame != null && clientFrameAge < CLIENT_REPORT_TTL
+            && (TRUST_CLIENT_FRAME || Math.abs(clientReportedFrame.w()) >= IDENTITY_W || serverSeesGravityInfluence())) {
             visualRotation.set(clientReportedFrame);
             visualTarget.set(clientReportedFrame);
             lastChaseTarget.set(clientReportedFrame);
@@ -5486,6 +5490,29 @@ public class GravityCapabilityImpl implements IGravityCapability {
      * same principle, which is why ships never showed the rejection).
      */
     public boolean isMovementClientAuthoritative() {
+        return movementClientAuthoritative();
+    }
+
+    /** {@code -Dgravityunbound.trustClientFrame=true}: a client's reported frame is adopted wherever it is, as before 2.0.0.7. */
+    private static final boolean TRUST_CLIENT_FRAME = Boolean.getBoolean("gravityunbound.trustClientFrame");
+
+    /**
+     * Whether the server has its own reason to think this player's gravity is other than the plain world's: a gravity
+     * of its own that is not down, a field's grace or a held surface, a ship it is attached to, Surface Cling boots,
+     * a vehicle (which carries its own frame), space (Genesis' bodies pull there), or a gravity source in reach of where
+     * it stands. What a client says about its frame counts only while one of these holds.
+     */
+    private boolean serverSeesGravityInfluence() {
+        if (currGravityDirection != Direction.DOWN || !baseGravityDirection.equals(DOWN)) return true;
+        if (fieldGraceTicks > 0 || lastGroundNormal != null || surfaceChangeCooldown > 0 || recentReleasedTicks > 0) return true;
+        if (attachedShipId() != null || entity.isPassenger() || celestial.turning()) return true;
+        if (entity instanceof LivingEntity living
+            && net.camacraft.gravityunbound.enchantment.SurfaceClingEnchantment.isWearing(living)) return true;
+        if (net.camacraft.camafy.compat.genesis.Celestials.isSpace(entity.level())) return true;
+        return net.camacraft.gravityunbound.util.GravityFieldLookup.isWithinAnySourceRange(entity.level(), entity.position());
+    }
+
+    private boolean movementClientAuthoritative() {
         return useCapsuleCollision()
             || fieldGraceTicks > 0
             || lastGroundNormal != null

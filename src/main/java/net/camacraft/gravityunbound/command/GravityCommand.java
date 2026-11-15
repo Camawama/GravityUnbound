@@ -25,7 +25,7 @@ public class GravityCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         LiteralArgumentBuilder<CommandSourceStack> builder = Commands
             .literal("gravity")
-            .requires(source -> source.hasPermission(2));
+            .requires(net.camacraft.camafy.permission.Permissions.require("gravityunbound", "command.gravity", 2));
         
         builder.then(Commands.literal("set_base_direction")
             .then(Commands.argument("direction", new DirectionArgumentType())

@@ -1,5 +1,48 @@
 # Gravity Unbound Changelog (formerly GravityVS)
 
+## 2.0.0.9 (2026-11-12, the move check beside ships, and how far a packet goes)
+
+2.0.0.8 stood down within three blocks of any Valkyrien Skies ship, so beside or on a ship a modified client still
+walked through walls, the world's and the ship's.
+
+- **The world's blocks beside a ship** are judged as anywhere else: they do not move, and an honest client collided
+  with them itself. The check reads blocks itself now (loaded chunks only, never the game's ray, which also meets
+  ships at the server's pose).
+- **A ship's blocks** are judged in the ship's space with a tolerance: 0.15 of a block, plus what the ship moves at
+  that point (its velocity, or what its pose really moved in the last tick, whichever is more) over the player's
+  latency and three ticks. A move is refused when its feet point is deep in the ship at this tick's pose and the last
+  one's with the probes pushed out by the tolerance, or when the line crosses more ship block than the tolerance under
+  both poses and all six lifts. A player already inside may move.
+- **Let pass on purpose:** a ship that moves more than 2 blocks in that time is not judged, and beside it the line
+  through the world's blocks is not either (the deep test still is); panes on a ship; hull thinner than the tolerance;
+  a low wall the lifted line clears; within 0.6 of a wall's end (the lift that lets a turned body round an edge).
+- **Not too far in one packet:** 20 blocks a packet (the game's own bound is 10), more for the velocity the server
+  knows and for the ship that carries the body; passengers, gliders, bodies another mod has claimed
+  (`PhysicsOwnership`) and bodies just teleported are not judged.
+- **Hovering is not judged:** the pack's servers run with `allow-flight`, so the game judges no player's height, and
+  jetpacks, weightless worlds, grapples and plating make a rule here a guess that would hit honest players.
+- **Switches:** `-Dgravityunbound.clientMoveShips=false`, `-Dgravityunbound.clientMoveSpeed=false`;
+  `-Dgravityunbound.clientMoveSanity=false` still switches every block test off.
+- **Harness** `harden_packets`: `gravityShipMoveCheck` (a static hull: along the deck, beside it and onto it pass,
+  through it and into it are refused), `gravitySpeedCheck` (a sprint and 12 blocks pass, 40 blocks are refused).
+
+## 2.0.0.8 (2026-11-12, moves the server takes on the client's word)
+
+Near a gravity source, on plating and in Surface Cling boots the server takes the position a client reports, because
+vanilla's own collision check does not know a turned body. A modified client could use that to walk through blocks.
+
+- **Fix:** such a move is refused when its feet point ends deep in a block (six probes at 0.25 round it), or when no
+  line from the last position to the new one is free once lifted by a step's height (0.6 at least) in one of the six
+  directions (`util.ClientMoveSanity`, asked from `ServerGamePacketListenerImplMixin`). Lifting in all six directions
+  lets steps, slabs, a cube's edge and a wall's face pass whatever the body's down is. A refused move is logged once
+  with its two positions and counted.
+- **Stands down** within reach of a Valkyrien Skies ship (its blocks move between two packets) and in chunks that are
+  not loaded. Speed and height of such a player are not judged.
+- **Switch:** `-Dgravityunbound.clientMoveSanity=false`.
+- **Measured** (harness `harden_packets` in the main pack, `gravityMoveCheck`): open ground passes, a move through a
+  wall and one into a wall are refused, a step, an edge and a wall's face pass. The plating, car and gravity scenarios
+  (`plating_*`, `car_*`, `gr3_cling`, `deck_cruise`, `npc_push`) had no move refused.
+
 ## 2.0.0.6 — 2026-10-30 (celestial gravity with the "Genesis x Ad Astra" add-on)
 
 Reported (2026-10-30): celestial bodies pulled with gravity but did not turn entities toward them in VS Genesis' Great Unknown.

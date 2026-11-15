@@ -46,6 +46,12 @@ public abstract class ServerGamePacketListenerImplMixin {
     @Shadow
     private boolean clientVehicleIsFloating;
 
+    @Shadow
+    private int receivedMovePacketCount;
+
+    @Shadow
+    private int knownMovePacketCount;
+
     /**
      * A VEHICLE ITS DRIVER PLACED IN THE SHIP'S FRAME NEEDS NO VANILLA MOVE. The driver's client
      * reports the car, boat or minecart it drives on a ship in the ship's own frame
@@ -307,8 +313,22 @@ public abstract class ServerGamePacketListenerImplMixin {
         org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Boolean> cir
     ) {
         if (gravityunbound$clientAuthoritative(new Vec3(x, y, z))) {
-            cir.setReturnValue(false);
+            // the client's word, but not through walls (2.0.0.8): the feet point may not end deep in a block, nor
+            // cross one on the way, a ship's included, nor go further than a packet does (util.ClientMoveSanity). True here sends the player back to where the packet began.
+            cir.setReturnValue(level instanceof net.minecraft.server.level.ServerLevel server
+                && net.camacraft.gravityunbound.util.ClientMoveSanity.refuses(server, this.player, gravityunbound$moveStart, new Vec3(x, y, z),
+                    this.receivedMovePacketCount - this.knownMovePacketCount));
         }
+    }
+
+    /** Where the player stood when the move packet in hand arrived (the start of the line ClientMoveSanity tests). */
+    @org.spongepowered.asm.mixin.Unique
+    private Vec3 gravityunbound$moveStart;
+
+    @org.spongepowered.asm.mixin.injection.Inject(method = "handleMovePlayer", at = @At("HEAD"))
+    private void gravityunbound$rememberMoveStart(net.minecraft.network.protocol.game.ServerboundMovePlayerPacket packet,
+                                                  org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        gravityunbound$moveStart = this.player.position();
     }
 
     /**

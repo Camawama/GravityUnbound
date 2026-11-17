@@ -70,6 +70,18 @@ public abstract class VanillaBackportServerEntityMixin {
         }
     }
 
+    /** The same handler where Vanilla Backport 1.2 moved its mixin (one of the two exists). */
+    @TargetHandler(
+        mixin = "com.blackgear.vanillabackport.core.mixin.common.happy_ghast.ServerEntityMixin",
+        name = "onSendChanges"
+    )
+    @Inject(method = "@MixinSquared:Handler", at = @At("HEAD"), cancellable = true, require = 0)
+    private void gravityunbound$vanillaSyncInField12(CallbackInfo vanillaBackportCallback, CallbackInfo ci) {
+        if (VanillaBackportCompat.isPositionAware(this.entity) && gravityunbound$inFrame()) {
+            ci.cancel();
+        }
+    }
+
     /**
      * Vanilla Backport's precise-position flag on the vanilla path: vanilla
      * sends an absolute teleport instead of a delta when the entity was

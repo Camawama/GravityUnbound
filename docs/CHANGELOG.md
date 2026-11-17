@@ -1,5 +1,12 @@
 # Gravity Unbound Changelog (formerly GravityVS)
 
+## 2.0.0.10 (2026-11-17, Vanilla Backport 1.2)
+
+- **Vanilla Backport 1.2** moved the classes the happy ghast's sync repair names (its `ServerEntityMixin` to
+  `core.mixin.common.happy_ghast`, `PositionAwareEntity` to `common.api.extensions.entity.movement`), so the repair
+  of a happy ghast in a gravity field lapsed without an error. `VanillaBackportServerEntityMixin` and
+  `compat.VanillaBackportCompat` now name both packages and work with Vanilla Backport 1.1 and 1.2.
+
 ## 2.0.0.9 (2026-11-12, the move check beside ships, and how far a packet goes)
 
 2.0.0.8 stood down within three blocks of any Valkyrien Skies ship, so beside or on a ship a modified client still

@@ -23,6 +23,11 @@ import net.minecraftforge.fml.ModList;
  */
 public final class VanillaBackportCompat {
     private static final boolean LOADED = ModList.get().isLoaded("vanillabackport");
+    /** The interface's name in Vanilla Backport 1.2 and in 1.1. */
+    private static final String[] POSITION_AWARE = {
+        "com.blackgear.vanillabackport.common.api.extensions.entity.movement.PositionAwareEntity",
+        "com.blackgear.vanillabackport.common.api.extensions.PositionAwareEntity"
+    };
     private static boolean resolved;
     private static Class<?> positionAware;
     private static MethodHandle requiresPrecisePosition;
@@ -39,9 +44,18 @@ public final class VanillaBackportCompat {
             return;
         }
         try {
-            positionAware = Class.forName(
-                "com.blackgear.vanillabackport.common.api.extensions.PositionAwareEntity",
-                false, VanillaBackportCompat.class.getClassLoader());
+            for (String name : POSITION_AWARE) {
+                try {
+                    positionAware = Class.forName(name, false, VanillaBackportCompat.class.getClassLoader());
+                    break;
+                }
+                catch (ClassNotFoundException missing) {
+                    // the other Vanilla Backport version's package
+                }
+            }
+            if (positionAware == null) {
+                return;
+            }
             requiresPrecisePosition = MethodHandles.publicLookup()
                 .findVirtual(positionAware, "getRequiresPrecisePosition", MethodType.methodType(boolean.class))
                 .asType(MethodType.methodType(boolean.class, Entity.class));
